@@ -1,0 +1,16 @@
+﻿# Build output
+bin/
+obj/
+.dotnet-sdk/
+*.pdb
+*.xml
+*.user
+.vs/
+
+# Generated installer payloads
+Payload.zip
+
+# Local app/package outputs
+Installer/
+BDO Multi-Tool/App Files/
+artifacts/

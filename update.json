@@ -1,0 +1,6 @@
+﻿{
+    "version":  "v0.1",
+    "releaseUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest",
+    "downloadUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest/download/BDO%20Multi-Tool%20Installer.exe",
+    "notes":  "Initial public update-checker release with the fixed single-exe installer package."
+}
