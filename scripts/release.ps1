@@ -109,7 +109,8 @@ $artifactRoot = Join-Path $repoRoot "artifacts"
 $appOut = Join-Path $artifactRoot "App Files"
 $installerOut = Join-Path $artifactRoot "Installer"
 $installerExe = Join-Path $installerOut "BDO Multi-Tool Installer.exe"
-$installerAssetName = [System.Uri]::EscapeDataString((Split-Path $installerExe -Leaf))
+$installerReleaseAsset = Join-Path $installerOut "BDO-Multi-Tool-Installer.exe"
+$installerAssetName = Split-Path $installerReleaseAsset -Leaf
 
 $dotnet = Resolve-DotnetSdkPath $repoRoot
 $git = Resolve-ToolPath "git" @("$env:LOCALAPPDATA\GitHubDesktop\app-*\resources\app\git\cmd\git.exe")
@@ -164,6 +165,7 @@ Get-ChildItem -LiteralPath $installerOut -Recurse -File | Where-Object { $_.Exte
 if (!(Test-Path -LiteralPath $installerExe)) {
 	throw "Installer was not created: $installerExe"
 }
+Copy-Item -LiteralPath $installerExe -Destination $installerReleaseAsset -Force
 
 Remove-Item -LiteralPath $installerPayload -Force -ErrorAction SilentlyContinue
 
@@ -193,7 +195,7 @@ if ($LASTEXITCODE -ne 0) {
 	throw "Git tag push failed."
 }
 
-$releaseArgs = @("release", "create", $versionTag, $installerExe, "--repo", $Repository, "--title", "BDO Multi-Tool $versionTag", "--notes")
+$releaseArgs = @("release", "create", $versionTag, $installerReleaseAsset, "--repo", $Repository, "--title", "BDO Multi-Tool $versionTag", "--notes")
 $releaseNotes = if ([string]::IsNullOrWhiteSpace($Notes)) {
 	"BDO Multi-Tool $versionTag release."
 } else {
@@ -212,4 +214,4 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "Release complete: $versionTag"
-Write-Host "Installer: $installerExe"
+Write-Host "Installer: $installerReleaseAsset"
