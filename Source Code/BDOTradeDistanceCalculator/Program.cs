@@ -26,6 +26,7 @@ internal static class Program
 	private static void Main(string[] args)
 	{
 		ApplicationConfiguration.Initialize();
+		Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
 		if (args.Any(a => string.Equals(a, "--coupon-smoke-test", StringComparison.OrdinalIgnoreCase)))
 		{
 			string root = Path.Combine(Path.GetTempPath(), $"bdo-coupon-smoke-{Guid.NewGuid():N}");
@@ -91,6 +92,14 @@ internal static class Program
 		appPaths3.EnsureDirectories();
 		PrepareUiFiles(appPaths3);
 		using AppLogger logger3 = new AppLogger(appPaths3.LogPath);
+		Application.ThreadException += (_, e) => logger3.Error("Unhandled UI exception.", e.Exception);
+		AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+		{
+			if (e.ExceptionObject is Exception exception)
+			{
+				logger3.Error("Unhandled app exception.", exception);
+			}
+		};
 		if (args.Any((string a) => string.Equals(a, "--smoke-test", StringComparison.OrdinalIgnoreCase)))
 		{
 			Environment.Exit(RunSmokeTestAsync(appPaths3, logger3).GetAwaiter().GetResult());

@@ -3,9 +3,11 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security;
+using System.Security.Principal;
 using System.Windows.Forms;
 
 internal static class Program
@@ -177,10 +179,10 @@ internal sealed class InstallerForm : Form
 				CreateShortcut(Path.Combine(desktop, InstallerConfig.ShortcutName + ".lnk"), exePath, exePath);
 			}
 			status.Text = "Scheduling market collector...";
-			CreateMarketCollectorTask(exePath);
+			bool marketCollectorScheduled = CreateMarketCollectorTask(exePath);
 			progress.Value = 90;
 
-			status.Text = "Finishing...";
+			status.Text = marketCollectorScheduled ? "Market collector scheduled." : "Market collector will refresh when the app opens.";
 			WriteUninstallHelper();
 			progress.Value = 100;
 			UseWaitCursor = false;
@@ -265,6 +267,7 @@ internal sealed class InstallerForm : Form
 			+ "echo Closing " + InstallerConfig.AppName + " if it is running...\r\n"
 			+ "taskkill /IM \"" + InstallerConfig.ExeName + "\" /F >nul 2>nul\r\n"
 			+ "schtasks /Delete /TN \"" + MarketCollectorTaskName + "\" /F >nul 2>nul\r\n"
+			+ "schtasks /Delete /TN \"" + GetUserMarketCollectorTaskName() + "\" /F >nul 2>nul\r\n"
 			+ "del \"" + desktopShortcutPath + "\" >nul 2>nul\r\n"
 			+ "rmdir /S /Q \"" + startMenuFolder + "\" >nul 2>nul\r\n"
 			+ "cd /d \"%TEMP%\"\r\n"
@@ -273,13 +276,43 @@ internal sealed class InstallerForm : Form
 		CreateShortcut(Path.Combine(startMenuFolder, "Uninstall " + InstallerConfig.ShortcutName + ".lnk"), uninstallPath);
 	}
 
-	private void CreateMarketCollectorTask(string exePath)
+	private bool CreateMarketCollectorTask(string exePath)
 	{
-		string xmlPath = Path.Combine(Path.GetTempPath(), "bdo-market-collector-task.xml");
+		string details;
+		if (TryCreateMarketCollectorTask(MarketCollectorTaskName, exePath, out details))
+		{
+			return true;
+		}
+
+		string userTaskName = GetUserMarketCollectorTaskName();
+		if (!string.Equals(userTaskName, MarketCollectorTaskName, StringComparison.OrdinalIgnoreCase)
+			&& TryCreateMarketCollectorTask(userTaskName, exePath, out details))
+		{
+			return true;
+		}
+
+		try
+		{
+			File.AppendAllText(
+				Path.Combine(installPath, "install.log"),
+				DateTime.Now.ToString("s") + " Market collector task was not created. " + details + Environment.NewLine);
+		}
+		catch
+		{
+		}
+
+		return false;
+	}
+
+	private bool TryCreateMarketCollectorTask(string taskName, string exePath, out string details)
+	{
+		string xmlPath = Path.Combine(Path.GetTempPath(), "bdo-market-collector-task-" + Guid.NewGuid().ToString("N") + ".xml");
 		try
 		{
 			string startBoundary = DateTime.Now.AddMinutes(5).ToString("yyyy-MM-ddTHH:mm:ss");
 			string workingDirectory = Path.GetDirectoryName(exePath) ?? installPath;
+			string userId = WindowsIdentity.GetCurrent().Name;
+			RunSchtasks("/Delete /TN \"" + taskName + "\" /F", 5000, out _);
 			string xml = @"<?xml version=""1.0"" encoding=""UTF-16""?>
 <Task version=""1.4"" xmlns=""http://schemas.microsoft.com/windows/2004/02/mit/task"">
   <RegistrationInfo>
@@ -301,6 +334,7 @@ internal sealed class InstallerForm : Form
   </Triggers>
   <Principals>
     <Principal id=""Author"">
+      <UserId>" + SecurityElement.Escape(userId) + @"</UserId>
       <LogonType>InteractiveToken</LogonType>
       <RunLevel>LeastPrivilege</RunLevel>
     </Principal>
@@ -333,38 +367,53 @@ internal sealed class InstallerForm : Form
   </Actions>
 </Task>";
 			File.WriteAllText(xmlPath, xml, System.Text.Encoding.Unicode);
-			ProcessStartInfo startInfo = new ProcessStartInfo("schtasks.exe", "/Create /TN \"" + MarketCollectorTaskName + "\" /XML \"" + xmlPath + "\" /F")
-			{
-				CreateNoWindow = true,
-				UseShellExecute = false,
-				RedirectStandardError = true,
-				RedirectStandardOutput = true
-			};
-			using Process process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start Task Scheduler.");
-			process.WaitForExit(15000);
-			if (process.ExitCode != 0)
-			{
-				string error = process.StandardError.ReadToEnd();
-				string output = process.StandardOutput.ReadToEnd();
-				MessageBox.Show(
-					"The app installed, but Windows would not create the background market collector task.\r\n\r\n"
-					+ (string.IsNullOrWhiteSpace(error) ? output : error),
-					InstallerConfig.AppName + " Setup",
-					MessageBoxButtons.OK,
-					MessageBoxIcon.Warning);
-			}
+			int exitCode = RunSchtasks("/Create /TN \"" + taskName + "\" /XML \"" + xmlPath + "\" /F", 15000, out details);
+			return exitCode == 0;
 		}
 		catch (Exception ex)
 		{
-			MessageBox.Show(
-				"The app installed, but the background market collector task could not be created.\r\n\r\n" + ex.Message,
-				InstallerConfig.AppName + " Setup",
-				MessageBoxButtons.OK,
-				MessageBoxIcon.Warning);
+			details = ex.Message;
+			return false;
 		}
 		finally
 		{
 			try { if (File.Exists(xmlPath)) File.Delete(xmlPath); } catch { }
 		}
+	}
+
+	private static int RunSchtasks(string arguments, int timeoutMilliseconds, out string output)
+	{
+		ProcessStartInfo startInfo = new ProcessStartInfo("schtasks.exe", arguments)
+		{
+			CreateNoWindow = true,
+			UseShellExecute = false,
+			RedirectStandardError = true,
+			RedirectStandardOutput = true
+		};
+		using Process process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start Task Scheduler.");
+		if (!process.WaitForExit(timeoutMilliseconds))
+		{
+			try { process.Kill(entireProcessTree: true); } catch { }
+			output = "Task Scheduler timed out.";
+			return -1;
+		}
+
+		string error = process.StandardError.ReadToEnd();
+		string standardOutput = process.StandardOutput.ReadToEnd();
+		output = string.IsNullOrWhiteSpace(error) ? standardOutput.Trim() : error.Trim();
+		return process.ExitCode;
+	}
+
+	private static string GetUserMarketCollectorTaskName()
+	{
+		string userName = Environment.UserName;
+		char[] safeChars = userName.Select(ch => char.IsLetterOrDigit(ch) || ch == '-' || ch == '_' || ch == '.' ? ch : '_').ToArray();
+		string safeUserName = new string(safeChars).Trim('_');
+		if (string.IsNullOrWhiteSpace(safeUserName))
+		{
+			return MarketCollectorTaskName;
+		}
+
+		return MarketCollectorTaskName + " - " + safeUserName;
 	}
 }

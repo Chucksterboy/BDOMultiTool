@@ -89,6 +89,8 @@ internal sealed class CalculatorForm : Form
 
 	private readonly CouponService couponService;
 
+	private readonly EventService eventService;
+
 	private readonly UpdateCheckerService updateCheckerService;
 
 	private MarketAnalyticsService? marketService;
@@ -124,6 +126,7 @@ internal sealed class CalculatorForm : Form
 		portraitReplacerService = new PortraitReplacerService(paths);
 		fontChangerService = new FontChangerService(paths);
 		couponService = new CouponService(paths, logger);
+		eventService = new EventService(paths, logger);
 		updateCheckerService = new UpdateCheckerService(logger);
 		Text = "BDO Multi-Tool";
 		appIcon = (Icon?)System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath)?.Clone() ?? SystemIcons.Application;
@@ -164,10 +167,7 @@ internal sealed class CalculatorForm : Form
 		menu.Items.Add("Exit", null, delegate
 		{
 			forceCloseFromTray = true;
-			if (trayIcon != null)
-			{
-				trayIcon.Visible = false;
-			}
+			TrySetTrayVisible(false);
 			Close();
 		});
 
@@ -187,13 +187,20 @@ internal sealed class CalculatorForm : Form
 
 	private void RestoreFromTray()
 	{
-		trayIcon.Visible = false;
-		ShowInTaskbar = true;
-		Show();
-		if (WindowState == FormWindowState.Minimized)
-			WindowState = FormWindowState.Normal;
-		Activate();
-		ApplyTaskbarCouponBadge(couponBadgeCount);
+		try
+		{
+			TrySetTrayVisible(false);
+			ShowInTaskbar = true;
+			Show();
+			if (WindowState == FormWindowState.Minimized)
+				WindowState = FormWindowState.Normal;
+			Activate();
+			ApplyTaskbarCouponBadge(couponBadgeCount);
+		}
+		catch (Exception ex)
+		{
+			logger.Error("Could not restore the app from the system tray.", ex);
+		}
 	}
 
 	public void RestoreFromExternalLaunch()
@@ -207,15 +214,40 @@ internal sealed class CalculatorForm : Form
 		RestoreFromTray();
 	}
 
-	private void MinimizeToSystemTray()
+	private bool MinimizeToSystemTray()
 	{
-		if (WindowState == FormWindowState.Maximized)
+		try
 		{
-			WindowState = FormWindowState.Normal;
+			if (WindowState == FormWindowState.Maximized)
+			{
+				WindowState = FormWindowState.Normal;
+			}
+
+			if (!TrySetTrayVisible(true))
+			{
+				WindowState = FormWindowState.Minimized;
+				ShowInTaskbar = true;
+				return false;
+			}
+
+			Hide();
+			ShowInTaskbar = false;
+			return true;
 		}
-		trayIcon.Visible = true;
-		Hide();
-		ShowInTaskbar = false;
+		catch (Exception ex)
+		{
+			logger.Error("Could not minimize the app to the system tray.", ex);
+			try
+			{
+				WindowState = FormWindowState.Minimized;
+				ShowInTaskbar = true;
+			}
+			catch
+			{
+			}
+
+			return false;
+		}
 	}
 
 	private void ShowDesktopNotification(string title, string message)
@@ -231,25 +263,35 @@ internal sealed class CalculatorForm : Form
 			safeMessage = safeMessage[..252] + "...";
 		}
 
-		bool wasHidden = !trayIcon.Visible;
-		trayIcon.BalloonTipTitle = safeTitle;
-		trayIcon.BalloonTipText = safeMessage;
-		trayIcon.BalloonTipIcon = ToolTipIcon.Info;
-		trayIcon.Visible = true;
-		trayIcon.ShowBalloonTip(8000);
-		if (wasHidden && Visible)
+		try
 		{
-			System.Windows.Forms.Timer cleanupTimer = new System.Windows.Forms.Timer { Interval = 9000 };
-			cleanupTimer.Tick += delegate
+			bool wasHidden = !trayIcon.Visible;
+			trayIcon.BalloonTipTitle = safeTitle;
+			trayIcon.BalloonTipText = safeMessage;
+			trayIcon.BalloonTipIcon = ToolTipIcon.Info;
+			if (!TrySetTrayVisible(true))
 			{
-				cleanupTimer.Stop();
-				cleanupTimer.Dispose();
-				if (Visible && ShowInTaskbar)
+				return;
+			}
+			trayIcon.ShowBalloonTip(8000);
+			if (wasHidden && Visible)
+			{
+				System.Windows.Forms.Timer cleanupTimer = new System.Windows.Forms.Timer { Interval = 9000 };
+				cleanupTimer.Tick += delegate
 				{
-					trayIcon.Visible = false;
-				}
-			};
-			cleanupTimer.Start();
+					cleanupTimer.Stop();
+					cleanupTimer.Dispose();
+					if (Visible && ShowInTaskbar)
+					{
+						TrySetTrayVisible(false);
+					}
+				};
+				cleanupTimer.Start();
+			}
+		}
+		catch (Exception ex)
+		{
+			logger.Warn("Could not show desktop notification: " + ex.Message);
 		}
 	}
 
@@ -303,20 +345,41 @@ internal sealed class CalculatorForm : Form
 
 	private void UpdateTrayCouponBadge(int count)
 	{
-		Icon? previousBadge = trayBadgeIcon;
-		trayBadgeIcon = null;
-		if (count <= 0)
+		try
 		{
-			trayIcon.Icon = appIcon;
-			trayIcon.Text = "BDO Multi-Tool";
-			previousBadge?.Dispose();
-			return;
-		}
+			Icon? previousBadge = trayBadgeIcon;
+			trayBadgeIcon = null;
+			if (count <= 0)
+			{
+				trayIcon.Icon = appIcon;
+				trayIcon.Text = "BDO Multi-Tool";
+				previousBadge?.Dispose();
+				return;
+			}
 
-		trayBadgeIcon = CreateTrayIconWithCouponDot(appIcon);
-		trayIcon.Icon = trayBadgeIcon;
-		trayIcon.Text = count == 1 ? "BDO Multi-Tool - 1 new coupon" : "BDO Multi-Tool - new coupons available";
-		previousBadge?.Dispose();
+			trayBadgeIcon = CreateTrayIconWithCouponDot(appIcon);
+			trayIcon.Icon = trayBadgeIcon;
+			trayIcon.Text = count == 1 ? "BDO Multi-Tool - 1 new coupon" : "BDO Multi-Tool - new coupons available";
+			previousBadge?.Dispose();
+		}
+		catch (Exception ex)
+		{
+			logger.Warn("Could not update system tray coupon badge: " + ex.Message);
+		}
+	}
+
+	private bool TrySetTrayVisible(bool visible)
+	{
+		try
+		{
+			trayIcon.Visible = visible;
+			return true;
+		}
+		catch (Exception ex)
+		{
+			logger.Warn("Could not change system tray visibility: " + ex.Message);
+			return false;
+		}
 	}
 
 	private static Icon CreateCouponNumberBadgeIcon(int count)
@@ -511,16 +574,17 @@ internal sealed class CalculatorForm : Form
 
 	protected override void OnFormClosed(FormClosedEventArgs e)
 	{
-		SetCouponBadgeCount(0);
-		marketService?.Dispose();
-		couponService.Dispose();
-		updateCheckerService.Dispose();
-		trayIcon.Visible = false;
-		trayIcon.Dispose();
-		taskbarBadgeIcon?.Dispose();
-		trayBadgeIcon?.Dispose();
-		appIcon.Dispose();
-		webView.Dispose();
+		try { SetCouponBadgeCount(0); } catch { }
+		try { marketService?.Dispose(); } catch { }
+		try { couponService.Dispose(); } catch { }
+		try { eventService.Dispose(); } catch { }
+		try { updateCheckerService.Dispose(); } catch { }
+		TrySetTrayVisible(false);
+		try { trayIcon.Dispose(); } catch { }
+		try { taskbarBadgeIcon?.Dispose(); } catch { }
+		try { trayBadgeIcon?.Dispose(); } catch { }
+		try { appIcon.Dispose(); } catch { }
+		try { webView.Dispose(); } catch { }
 		base.OnFormClosed(e);
 	}
 
@@ -656,6 +720,10 @@ internal sealed class CalculatorForm : Form
 			return await couponService.InitializeAsync(CancellationToken.None);
 		case "refreshCoupons":
 			return await couponService.RefreshAsync(CancellationToken.None);
+		case "initializeEvents":
+			return await eventService.InitializeAsync(CancellationToken.None);
+		case "refreshEvents":
+			return await eventService.RefreshAsync(CancellationToken.None);
 		case "checkForUpdates":
 			return await updateCheckerService.CheckAsync(CancellationToken.None);
 		case "saveCouponSettings":

@@ -2472,6 +2472,84 @@
   .toastIcon { width:30px;height:30px;display:grid;place-items:center;border-radius:50%;color:#081018;background:var(--toast-accent);font-weight:900; }.toastCopy strong { display:block;font-size:13px; }.toastCopy span { display:block;margin-top:3px;color:var(--ui-text-secondary);font-size:11px;line-height:1.35; }.toastCopy small { display:block;margin-top:5px;color:var(--ui-text-secondary);font-size:9px;opacity:.72; }.toastClose { border:0;color:var(--ui-text-secondary);background:transparent;cursor:pointer;font-size:16px; }.uiToast.leaving { opacity:0;transform:translateX(16px);transition:.18s ease; } @keyframes toastIn { from{opacity:0;transform:translateY(10px) scale(.98)} }
   body{padding-bottom:46px!important}
   .appStatusBar { position:fixed!important;left:0!important;right:0!important;bottom:0!important;z-index:1200;min-height:38px;margin-top:0!important;padding:8px 18px;display:flex;align-items:center;justify-content:space-between;gap:14px;color:var(--ui-text-secondary);border-top:1px solid var(--ui-border);background:color-mix(in srgb,var(--ui-panel) 92%,transparent);backdrop-filter:blur(18px);font-size:11px; }.statusLeft{display:inline-flex;align-items:center;gap:12px;min-width:0}.statusReady { display:inline-flex;align-items:center;gap:8px; }.statusReady::before { content:"";width:8px;height:8px;border-radius:50%;background:var(--ui-success);box-shadow:0 0 12px var(--ui-success); }.discordContact{display:inline-flex;align-items:center;gap:7px;padding:4px 10px;border:1px solid color-mix(in srgb,#5865f2 68%,var(--ui-border));border-radius:999px;color:#fff;background:linear-gradient(90deg,#5865f2,color-mix(in srgb,var(--ui-accent) 70%,#5865f2));font-weight:900;letter-spacing:.02em;text-shadow:0 1px 1px rgba(0,0,0,.35);box-shadow:0 0 16px rgba(88,101,242,.38),inset 0 1px rgba(255,255,255,.28);white-space:nowrap}.discordContact::before{content:"";width:7px;height:7px;border-radius:50%;background:#fff;box-shadow:0 0 10px #fff}.statusRight{display:inline-flex;align-items:center;justify-content:flex-end;gap:12px;min-width:0}.couponStatusAlert{display:none;align-items:center;gap:7px;padding:4px 10px;border:1px solid color-mix(in srgb,var(--ui-success) 62%,var(--ui-border));border-radius:999px;color:#07130b;background:linear-gradient(90deg,var(--ui-success),color-mix(in srgb,var(--ui-warning) 72%,var(--ui-success)));font-weight:900;letter-spacing:.02em;box-shadow:0 0 18px color-mix(in srgb,var(--ui-success) 36%,transparent),inset 0 1px rgba(255,255,255,.34);white-space:nowrap}.couponStatusAlert.show{display:inline-flex;animation:couponStatusGlow 1.7s ease-in-out infinite alternate}.couponStatusAlert::before{content:"";width:7px;height:7px;border-radius:50%;background:#fff;box-shadow:0 0 10px #fff}.updateStatusAlert{display:none;align-items:center;gap:7px;padding:4px 10px;border:1px solid color-mix(in srgb,var(--ui-warning) 74%,var(--ui-border));border-radius:999px;color:#1b1200;background:linear-gradient(90deg,var(--ui-warning),color-mix(in srgb,var(--ui-accent) 72%,var(--ui-warning)));font-weight:900;letter-spacing:.02em;box-shadow:0 0 18px color-mix(in srgb,var(--ui-warning) 34%,transparent),inset 0 1px rgba(255,255,255,.34);white-space:nowrap;cursor:pointer}.updateStatusAlert.show{display:inline-flex;animation:couponStatusGlow 1.7s ease-in-out infinite alternate}.updateStatusAlert::before{content:"";width:7px;height:7px;border-radius:50%;background:#fff;box-shadow:0 0 10px #fff}@keyframes couponStatusGlow{from{filter:saturate(1);transform:translateY(0)}to{filter:saturate(1.25) brightness(1.08);transform:translateY(-1px)}}
+
+  #eventsView{min-height:calc(100vh - 92px);color:var(--ui-text)}
+  .eventsShell{max-width:1560px;margin:0 auto;padding:28px 18px 76px}
+  .eventsHeader{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:14px}
+  .eventsHeader h1{margin:0;font-size:clamp(30px,3.1vw,46px);line-height:1;text-transform:uppercase;letter-spacing:.04em}
+  .eventsStatus{display:flex;align-items:center;gap:10px;color:var(--ui-text-secondary);font-size:12px;white-space:nowrap}
+  .eventsStatus i{width:9px;height:9px;border-radius:50%;background:var(--ui-success);box-shadow:0 0 14px var(--ui-success)}
+  .eventsStatus.error i{background:var(--ui-error);box-shadow:0 0 14px var(--ui-error)}
+  .eventsRefresh{height:42px;padding:0 18px;border:1px solid color-mix(in srgb,var(--ui-accent) 48%,var(--ui-border));background:color-mix(in srgb,var(--ui-card) 84%,transparent);color:var(--ui-text);font-weight:800;cursor:pointer}
+  .eventsRefresh:hover{border-color:var(--ui-accent);color:var(--ui-accent)}
+  .eventsTimeline{position:relative;overflow:hidden;border:1px solid var(--ui-border);border-radius:12px;background:linear-gradient(145deg,color-mix(in srgb,var(--ui-panel) 84%,transparent),color-mix(in srgb,var(--ui-card) 92%,black));padding:16px 18px 18px;margin-bottom:14px;box-shadow:inset 0 1px color-mix(in srgb,var(--ui-accent) 16%,transparent)}
+  .eventsTimelineTop{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;color:var(--ui-text-secondary);font-size:12px}
+  .eventsTimelineTop strong{color:var(--ui-text);font-size:15px}
+  .eventsTimelineDays{display:grid;grid-template-columns:repeat(14,minmax(54px,1fr));gap:1px;margin-bottom:12px}
+  .eventsTimelineDay{display:grid;place-items:center;min-height:42px;border-left:1px solid color-mix(in srgb,var(--ui-border) 55%,transparent);color:var(--ui-text-secondary);font-size:11px}
+  .eventsTimelineDay strong{display:block;color:var(--ui-text);font-size:15px}
+  .eventsTimelineBars{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:8px}
+  .eventsTimelineBar{min-width:0;padding:7px 10px;border:1px solid color-mix(in srgb,var(--ui-accent) 28%,var(--ui-border));border-radius:7px;background:linear-gradient(90deg,color-mix(in srgb,var(--ui-accent) 35%,var(--ui-card)),color-mix(in srgb,var(--ui-accent-hover) 24%,var(--ui-card)));color:var(--ui-text);font-weight:800;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .eventsLayout{display:grid;grid-template-columns:minmax(560px,1.7fr) minmax(380px,.86fr);gap:18px;align-items:start}
+  .eventsListPanel,.eventsDetail{border:1px solid var(--ui-border);border-radius:12px;background:linear-gradient(145deg,color-mix(in srgb,var(--ui-panel) 82%,transparent),color-mix(in srgb,var(--ui-card) 94%,black));box-shadow:0 22px 55px rgba(0,0,0,.18);overflow:hidden}
+  .eventsGroup{padding:16px 16px 8px}
+  .eventsGroup + .eventsGroup{border-top:1px solid var(--ui-border)}
+  .eventsGroupTitle{display:flex;align-items:center;gap:10px;margin:0 0 10px;font-size:14px;text-transform:uppercase;letter-spacing:.08em;color:var(--ui-accent)}
+  .eventsGroupTitle i{width:8px;height:8px;border-radius:50%;background:var(--ui-accent);box-shadow:0 0 14px var(--ui-accent)}
+  .eventsGroupTitle span{color:var(--ui-text-secondary);font-size:11px;letter-spacing:.02em}
+  .eventRows{display:grid;gap:8px}
+  .eventRow{--event-color:var(--ui-accent);display:grid;grid-template-columns:150px minmax(0,1fr) 135px 190px 95px;align-items:center;gap:0;min-height:86px;border:1px solid color-mix(in srgb,var(--event-color) 38%,var(--ui-border));border-radius:9px;background:linear-gradient(90deg,color-mix(in srgb,var(--event-color) 8%,transparent),color-mix(in srgb,var(--ui-card) 90%,transparent));overflow:hidden;cursor:pointer;transition:transform .18s ease,border-color .18s ease,background .18s ease,box-shadow .18s ease}
+  .eventRow:hover,.eventRow.selected{border-color:var(--event-color);background:linear-gradient(90deg,color-mix(in srgb,var(--event-color) 16%,transparent),color-mix(in srgb,var(--ui-card) 88%,transparent));box-shadow:0 0 18px color-mix(in srgb,var(--event-color) 18%,transparent);transform:translateY(-1px)}
+  .eventThumb{width:150px;height:86px;object-fit:cover;background:#05070a}
+  .eventMain{padding:12px 16px;min-width:0}
+  .eventMain strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:16px;color:var(--ui-text)}
+  .eventBadge{display:inline-flex;margin-top:8px;padding:3px 8px;border:1px solid color-mix(in srgb,var(--event-color) 54%,var(--ui-border));border-radius:5px;color:var(--event-color);background:color-mix(in srgb,var(--event-color) 13%,transparent);font-size:11px;font-weight:800}
+  .eventDate{color:var(--ui-text-secondary);font-size:12px;text-align:center}
+  .eventProgress{height:6px;margin:0 18px;border-radius:999px;background:color-mix(in srgb,var(--ui-border) 46%,transparent);overflow:hidden}
+  .eventProgress span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--ui-success),var(--event-color));border-radius:inherit}
+  .eventTimeLeft{padding-right:14px;text-align:right;color:var(--event-color);font-size:13px;font-weight:900}
+  .eventRow[data-event-category="login-rewards"],.eventsTimelineBar[data-event-category="login-rewards"]{--event-color:#8b7cff}
+  .eventRow[data-event-category="combat"],.eventsTimelineBar[data-event-category="combat"]{--event-color:#ff6b6b}
+  .eventRow[data-event-category="life"],.eventsTimelineBar[data-event-category="life"]{--event-color:#4ade80}
+  .eventRow[data-event-category="rewards"],.eventsTimelineBar[data-event-category="rewards"]{--event-color:#f8c84e}
+  .eventRow[data-event-category="guild"],.eventsTimelineBar[data-event-category="guild"]{--event-color:#fb923c}
+  .eventRow[data-event-category="season"],.eventsTimelineBar[data-event-category="season"]{--event-color:#38bdf8}
+  .eventRow[data-event-category="adventure"],.eventsTimelineBar[data-event-category="adventure"]{--event-color:#a78bfa}
+  .eventBadge[data-event-category="login-rewards"]{--event-color:#8b7cff}
+  .eventBadge[data-event-category="combat"]{--event-color:#ff6b6b}
+  .eventBadge[data-event-category="life"]{--event-color:#4ade80}
+  .eventBadge[data-event-category="rewards"]{--event-color:#f8c84e}
+  .eventBadge[data-event-category="guild"]{--event-color:#fb923c}
+  .eventBadge[data-event-category="season"]{--event-color:#38bdf8}
+  .eventBadge[data-event-category="adventure"]{--event-color:#a78bfa}
+  .eventsTimelineBar{--event-color:var(--ui-accent);border-color:color-mix(in srgb,var(--event-color) 42%,var(--ui-border));background:linear-gradient(90deg,color-mix(in srgb,var(--event-color) 45%,var(--ui-card)),color-mix(in srgb,var(--event-color) 22%,var(--ui-card)));box-shadow:inset 0 1px color-mix(in srgb,#fff 16%,transparent)}
+  .eventsEmpty{padding:36px;text-align:center;color:var(--ui-text-secondary)}
+  .eventsDetail{position:sticky;top:calc(var(--fixedTopOffset,210px) + 12px);min-height:560px}
+  .eventsDetailHero{position:relative;min-height:190px;background:#05070a;overflow:hidden}
+  .eventsDetailHero img{width:100%;height:230px;object-fit:cover;display:block;filter:saturate(1.04) contrast(1.04)}
+  .eventsDetailHero::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 22%,rgba(0,0,0,.78))}
+  .eventsDetailHeroText{position:absolute;left:22px;right:22px;bottom:18px;z-index:1}
+  .eventsDetailHeroText h2{margin:0 0 9px;font-size:26px;line-height:1.08;color:#fff;text-shadow:0 4px 18px #000}
+  .eventsDetailBody{padding:20px 22px 24px}
+  .eventsDetailMeta{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+  .eventsDetailMeta span{padding:6px 9px;border:1px solid var(--ui-border);border-radius:6px;color:var(--ui-text-secondary);background:color-mix(in srgb,var(--ui-card) 88%,transparent);font-size:12px}
+  .eventsDetailSummary{margin:0 0 18px;color:var(--ui-text-secondary);line-height:1.55}
+  .eventsOpen{width:100%;height:48px;border:1px solid color-mix(in srgb,var(--ui-warning) 70%,var(--ui-border));border-radius:8px;background:linear-gradient(90deg,color-mix(in srgb,var(--ui-warning) 70%,#5a3a05),color-mix(in srgb,var(--ui-accent) 45%,#6d4310));color:#fff3cf;font-weight:900;cursor:pointer}
+  .eventsOpen:hover{filter:brightness(1.08);box-shadow:0 0 22px color-mix(in srgb,var(--ui-warning) 30%,transparent)}
+  #eventsView .eventsTimeline,#eventsView .eventsListPanel,#eventsView .eventsDetail{background:linear-gradient(145deg,color-mix(in srgb,var(--ui-panel) 94%,#020308),color-mix(in srgb,var(--ui-card) 96%,#030409));backdrop-filter:blur(12px)}
+  #eventsView :is(.eventsTimelineTop strong,.eventMain strong,.eventsGroupTitle,.eventsDetailHeroText h2){color:var(--text,var(--ui-text))!important}
+  #eventsView :is(.eventsStatus,.eventsTimelineTop,.eventsTimelineDay,.eventDate,.eventsDetailMeta span,.eventsDetailSummary,.eventsEmpty){color:color-mix(in srgb,var(--text,var(--ui-text)) 72%,var(--muted,var(--ui-text-secondary)))!important}
+  #eventsView .eventsTimeline{border-color:color-mix(in srgb,var(--ui-accent) 45%,var(--ui-border));background:radial-gradient(circle at 18% 0,color-mix(in srgb,var(--ui-accent) 13%,transparent),transparent 32%),linear-gradient(145deg,color-mix(in srgb,var(--ui-panel) 97%,#020308),color-mix(in srgb,var(--ui-card) 98%,#030409));box-shadow:0 16px 38px rgba(0,0,0,.24),inset 0 1px color-mix(in srgb,#fff 9%,transparent)}
+  #eventsView .eventsTimelineTop strong{font-size:17px;text-shadow:0 0 12px color-mix(in srgb,var(--ui-accent) 28%,transparent)}
+  #eventsView .eventsTimelineTop span{font-weight:900;color:color-mix(in srgb,var(--text,var(--ui-text)) 82%,var(--ui-accent))!important}
+  #eventsView .eventsTimelineDay{min-height:48px;border-left-color:color-mix(in srgb,var(--ui-accent) 22%,transparent);background:linear-gradient(180deg,color-mix(in srgb,var(--ui-accent) 4%,transparent),transparent)}
+  #eventsView .eventsTimelineDay span{color:color-mix(in srgb,var(--text,var(--ui-text)) 70%,var(--ui-accent));font-weight:800}
+  #eventsView .eventsTimelineDay strong{color:color-mix(in srgb,var(--text,var(--ui-text)) 86%,white);font-size:17px;text-shadow:0 0 12px color-mix(in srgb,var(--ui-accent) 20%,transparent)}
+  #eventsView .eventsTimelineDay.today{border-radius:8px;background:linear-gradient(180deg,color-mix(in srgb,var(--ui-accent) 20%,transparent),color-mix(in srgb,var(--ui-accent) 7%,transparent))}
+  #eventsView .eventsTimelineBar{color:color-mix(in srgb,var(--text,var(--ui-text)) 88%,white)!important;border-color:color-mix(in srgb,var(--event-color) 62%,var(--ui-border));background:linear-gradient(90deg,color-mix(in srgb,var(--event-color) 42%,var(--ui-card)),color-mix(in srgb,var(--event-color) 18%,#05070a));box-shadow:inset 0 1px color-mix(in srgb,#fff 17%,transparent),0 0 14px color-mix(in srgb,var(--event-color) 10%,transparent)}
+  #eventsView .eventRow{background:linear-gradient(90deg,color-mix(in srgb,var(--event-color) 12%,var(--ui-panel)),color-mix(in srgb,var(--ui-card) 96%,#020308));box-shadow:inset 0 1px color-mix(in srgb,#fff 6%,transparent)}
+  #eventsView .eventRow:hover,#eventsView .eventRow.selected{background:linear-gradient(90deg,color-mix(in srgb,var(--event-color) 20%,var(--ui-panel)),color-mix(in srgb,var(--ui-card) 97%,#020308));box-shadow:0 0 20px color-mix(in srgb,var(--event-color) 22%,transparent),inset 0 1px color-mix(in srgb,#fff 9%,transparent)}
+  @media(max-width:1200px){.eventsLayout{grid-template-columns:1fr}.eventsDetail{position:relative;top:auto}.eventRow{grid-template-columns:130px minmax(0,1fr) 105px}.eventProgress,.eventDate{display:none}.eventThumb{width:130px}.eventsTimelineDays{grid-template-columns:repeat(7,1fr)}}
   /* Final contrast guard: legacy light-theme colors must never override a preset. */
   body[data-style] .appView { color:var(--text) !important; }
   body[data-style] .appView :is(h1,h2,h3,h4,p,label,td,.value,.detail,.small,.marketPaneHead,.marketEmpty,.detailTitle,.marketMetric strong,.salesCard strong,.graphPanel,.trackedItem strong,.mustOrderCard h3,.mustOrderStats strong,.mustOrderReason,.outfitTopline strong,.outfitTable td,.portraitPathValue,.portraitFileMeta,.portraitPlaceholder,.portraitCropEditorHead strong,.portraitCropSliderTop,.fontPathValue,.fontPresetTop strong,.fontCustomMeta strong,.fontUtilityCard,.fontCustomEmpty,.fontStatus,.settingsCard,.settingCopy strong,.themeChoice strong,.backgroundChoice strong) { color:var(--text) !important; }
@@ -2945,6 +3023,7 @@ body[data-style]:not([data-style="custom"]) .navFrame .navButton[data-app-view="
 body[data-style]:not([data-style="custom"]) .navFrame .navButton[data-app-view="portraitView"] .navIcon::before{content:"\265F"!important;font-size:18px!important;}
 body[data-style]:not([data-style="custom"]) .navFrame .navButton[data-app-view="fontChangerView"] .navIcon::before{content:"T"!important;font-family:Georgia,"Times New Roman",serif!important;font-size:20px!important;transform:translateY(2px)!important;}
 body[data-style]:not([data-style="custom"]) .navFrame .navButton[data-app-view="couponsView"] .navIcon::before{content:""!important;width:24px!important;height:18px!important;background:currentColor!important;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 20'%3E%3Cpath d='M2 4.5A2.5 2.5 0 0 1 4.5 2h19A2.5 2.5 0 0 1 26 4.5v3.2a3.2 3.2 0 0 0 0 4.6v3.2a2.5 2.5 0 0 1-2.5 2.5h-19A2.5 2.5 0 0 1 2 15.5v-3.2a3.2 3.2 0 0 0 0-4.6V4.5Zm7 2v7h2v-7H9Zm4 0v7h6v-2h-4v-1h3V9h-3v-.8h4v-2H13Z' fill='black'/%3E%3C/svg%3E") center/contain no-repeat!important;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 20'%3E%3Cpath d='M2 4.5A2.5 2.5 0 0 1 4.5 2h19A2.5 2.5 0 0 1 26 4.5v3.2a3.2 3.2 0 0 0 0 4.6v3.2a2.5 2.5 0 0 1-2.5 2.5h-19A2.5 2.5 0 0 1 2 15.5v-3.2a3.2 3.2 0 0 0 0-4.6V4.5Zm7 2v7h2v-7H9Zm4 0v7h6v-2h-4v-1h3V9h-3v-.8h4v-2H13Z' fill='black'/%3E%3C/svg%3E") center/contain no-repeat!important;}
+body[data-style]:not([data-style="custom"]) .navFrame .navButton[data-app-view="eventsView"] .navIcon::before{content:""!important;width:22px!important;height:22px!important;background:currentColor!important;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M7 2h2v2h6V2h2v2h2.5A2.5 2.5 0 0 1 22 6.5v12A2.5 2.5 0 0 1 19.5 21h-15A2.5 2.5 0 0 1 2 18.5v-12A2.5 2.5 0 0 1 4.5 4H7V2Zm12.5 7h-15v9.5h15V9ZM12 10.4l1.25 2.55 2.82.41-2.04 1.98.48 2.8L12 16.82l-2.51 1.32.48-2.8-2.04-1.98 2.82-.41L12 10.4Z'/%3E%3C/svg%3E") center/contain no-repeat!important;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M7 2h2v2h6V2h2v2h2.5A2.5 2.5 0 0 1 22 6.5v12A2.5 2.5 0 0 1 19.5 21h-15A2.5 2.5 0 0 1 2 18.5v-12A2.5 2.5 0 0 1 4.5 4H7V2Zm12.5 7h-15v9.5h15V9ZM12 10.4l1.25 2.55 2.82.41-2.04 1.98.48 2.8L12 16.82l-2.51 1.32.48-2.8-2.04-1.98 2.82-.41L12 10.4Z'/%3E%3C/svg%3E") center/contain no-repeat!important;}
 body[data-style]:not([data-style="custom"]) .navFrame .navButton[data-app-view="settingsView"] .navIcon::before{content:"\2699"!important;font-size:21px!important;}
 body[data-style]:not([data-style="custom"]) .navFrame .navButton[data-app-view="resetTimersView"] .navIcon::before{content:""!important;width:23px!important;height:23px!important;background:currentColor!important;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2a10 10 0 1 0 10 10h-2a8 8 0 1 1-2.34-5.66L15 9h7V2l-2.92 2.92A9.96 9.96 0 0 0 12 2Zm1 5h-2v6l5 3 1-1.73-4-2.27V7Z' fill='black'/%3E%3C/svg%3E") center/contain no-repeat!important;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2a10 10 0 1 0 10 10h-2a8 8 0 1 1-2.34-5.66L15 9h7V2l-2.92 2.92A9.96 9.96 0 0 0 12 2Zm1 5h-2v6l5 3 1-1.73-4-2.27V7Z' fill='black'/%3E%3C/svg%3E") center/contain no-repeat!important;}
 body[data-style]:not([data-style="custom"]) .navFrame .navButton[data-app-view="bracketsView"] .navIcon::before{content:"\25A5"!important;font-size:20px!important;}
@@ -2961,6 +3040,7 @@ body[data-style="royal"] .navFrame .navButton .navIcon{background:linear-gradien
 .navButton[data-app-view="bracketsView"] .navIcon::before{content:"\25A5"}
 .navButton[data-app-view="masteryBracketsView"] .navIcon::before{content:"\2726"}
 .navButton[data-app-view="lightstoneSetsView"] .navIcon::before{content:"\25C9"}
+.navButton[data-app-view="eventsView"] .navIcon::before{content:"\2605"}
 body[data-style] .navFrame .appNav{flex-wrap:wrap!important;align-content:center!important;row-gap:10px!important}
 body[data-style] .navFrame .navButton.betaNavButton{flex:0 1 205px!important;max-width:245px!important}
 
@@ -3183,6 +3263,7 @@ body[data-style="custom"] .navFrame .navButton[data-app-view="marketView"] .navI
 body[data-style="custom"] .navFrame .navButton[data-app-view="portraitView"] .navIcon::before{content:"\265F"!important;font-size:18px!important;}
 body[data-style="custom"] .navFrame .navButton[data-app-view="fontChangerView"] .navIcon::before{content:"T"!important;font-family:Georgia,"Times New Roman",serif!important;font-size:20px!important;transform:translateY(2px)!important;}
 body[data-style="custom"] .navFrame .navButton[data-app-view="couponsView"] .navIcon::before{content:""!important;width:24px!important;height:18px!important;background:currentColor!important;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 20'%3E%3Cpath d='M2 4.5A2.5 2.5 0 0 1 4.5 2h19A2.5 2.5 0 0 1 26 4.5v3.2a3.2 3.2 0 0 0 0 4.6v3.2a2.5 2.5 0 0 1-2.5 2.5h-19A2.5 2.5 0 0 1 2 15.5v-3.2a3.2 3.2 0 0 0 0-4.6V4.5Zm7 2v7h2v-7H9Zm4 0v7h6v-2h-4v-1h3V9h-3v-.8h4v-2H13Z' fill='black'/%3E%3C/svg%3E") center/contain no-repeat!important;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 20'%3E%3Cpath d='M2 4.5A2.5 2.5 0 0 1 4.5 2h19A2.5 2.5 0 0 1 26 4.5v3.2a3.2 3.2 0 0 0 0 4.6v3.2a2.5 2.5 0 0 1-2.5 2.5h-19A2.5 2.5 0 0 1 2 15.5v-3.2a3.2 3.2 0 0 0 0-4.6V4.5Zm7 2v7h2v-7H9Zm4 0v7h6v-2h-4v-1h3V9h-3v-.8h4v-2H13Z' fill='black'/%3E%3C/svg%3E") center/contain no-repeat!important;}
+body[data-style="custom"] .navFrame .navButton[data-app-view="eventsView"] .navIcon::before{content:""!important;width:22px!important;height:22px!important;background:currentColor!important;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M7 2h2v2h6V2h2v2h2.5A2.5 2.5 0 0 1 22 6.5v12A2.5 2.5 0 0 1 19.5 21h-15A2.5 2.5 0 0 1 2 18.5v-12A2.5 2.5 0 0 1 4.5 4H7V2Zm12.5 7h-15v9.5h15V9ZM12 10.4l1.25 2.55 2.82.41-2.04 1.98.48 2.8L12 16.82l-2.51 1.32.48-2.8-2.04-1.98 2.82-.41L12 10.4Z'/%3E%3C/svg%3E") center/contain no-repeat!important;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M7 2h2v2h6V2h2v2h2.5A2.5 2.5 0 0 1 22 6.5v12A2.5 2.5 0 0 1 19.5 21h-15A2.5 2.5 0 0 1 2 18.5v-12A2.5 2.5 0 0 1 4.5 4H7V2Zm12.5 7h-15v9.5h15V9ZM12 10.4l1.25 2.55 2.82.41-2.04 1.98.48 2.8L12 16.82l-2.51 1.32.48-2.8-2.04-1.98 2.82-.41L12 10.4Z'/%3E%3C/svg%3E") center/contain no-repeat!important;}
 body[data-style="custom"] .navFrame .navButton[data-app-view="settingsView"] .navIcon::before{content:"\2699"!important;font-size:21px!important;}
 body[data-style="custom"] .navFrame .navButton[data-app-view="resetTimersView"] .navIcon::before{content:"\21BB"!important;font-size:21px!important;}
 body[data-style="custom"] .navFrame .navButton[data-app-view="bracketsView"] .navIcon::before{content:"\25A5"!important;font-size:20px!important;}
@@ -3246,6 +3327,7 @@ body[data-style="custom"] .navFrame{
     <button class="navButton" data-app-view="settingsView"><span class="navIcon" aria-hidden="true"></span><span class="navLabel">Settings</span></button>
     <span class="navRowBreak" aria-hidden="true"></span>
     <button class="navButton betaNavButton" data-app-view="resetTimersView"><span class="navIcon" aria-hidden="true"></span><span class="navLabel">Reset Timers</span></button>
+    <button class="navButton betaNavButton" data-app-view="eventsView"><span class="navIcon" aria-hidden="true"></span><span class="navLabel">Events</span></button>
     <button class="navButton betaNavButton" data-app-view="bracketsView"><span class="navIcon" aria-hidden="true"></span><span class="navLabel">Brackets</span></button>
     <button class="navButton betaNavButton" data-app-view="masteryBracketsView"><span class="navIcon" aria-hidden="true"></span><span class="navLabel">Mastery Brackets</span></button>
     <button class="navButton betaNavButton" data-app-view="lightstoneSetsView"><span class="navIcon" aria-hidden="true"></span><span class="navLabel">Lightstone Sets</span></button>
@@ -3757,6 +3839,37 @@ body[data-style="custom"] .navFrame{
       <footer class="couponBottom"><span class="couponTip">i &nbsp; Tip: New coupons are added automatically when available.</span></footer>
     </section>
     <input id="couponShowExpired" type="checkbox" hidden><span id="couponExpiredCount" hidden>0</span>
+  </div>
+</section>
+
+<section id="eventsView" class="appView">
+  <div class="eventsShell">
+    <header class="eventsHeader">
+      <div>
+        <h1>Events</h1>
+      </div>
+      <div class="eventsStatus"><i></i><span id="eventsStatusText">Official events loading...</span><button id="eventsRefresh" class="eventsRefresh" type="button">Refresh Events</button></div>
+    </header>
+    <section class="eventsTimeline" aria-label="Official event timeline">
+      <div class="eventsTimelineTop"><strong id="eventsTimelineTitle">Official BDO Events</strong><span id="eventsTimelineCount">0 active</span></div>
+      <div id="eventsTimelineDays" class="eventsTimelineDays"></div>
+      <div id="eventsTimelineBars" class="eventsTimelineBars"></div>
+    </section>
+    <section class="eventsLayout">
+      <div class="eventsListPanel">
+        <div class="eventsGroup" data-event-group="endingSoon">
+          <h2 class="eventsGroupTitle"><i></i>Ending Soon <span id="eventsEndingCount">0 events</span></h2>
+          <div id="eventsEndingRows" class="eventRows"><div class="eventsEmpty">Loading official events...</div></div>
+        </div>
+        <div class="eventsGroup" data-event-group="active">
+          <h2 class="eventsGroupTitle"><i></i>Active Now <span id="eventsActiveCount">0 events</span></h2>
+          <div id="eventsActiveRows" class="eventRows"></div>
+        </div>
+      </div>
+      <aside id="eventsDetail" class="eventsDetail">
+        <div class="eventsEmpty">Select an event to see its details.</div>
+      </aside>
+    </section>
   </div>
 </section>
 
@@ -5274,6 +5387,23 @@ homeEl.guildBossDay?.addEventListener("change",saveGuildBossSchedule);
 homeEl.guildBossTime?.addEventListener("change",saveGuildBossSchedule);
 homeEl.toggles?.addEventListener("change",event=>{const input=event.target.closest("[data-boss-toggle]");if(!input)return;const s=normalizedHomeSettings();s.bosses[input.dataset.bossToggle]=input.checked;s.notified={};commitHomeSettings(s);NotificationService.ShowInfo(`${input.dataset.bossToggle} notifications ${input.checked?"enabled":"disabled"}.`,"Home settings saved")});
 resetTimerEl.localTime?.addEventListener("change",()=>{const settings=normalizedResetSettings();settings.showLocalTime=resetTimerEl.localTime.checked;saveResetSettings(settings);renderResetTimers(settings);NotificationService.ShowInfo(`Reset timers now show ${settings.showLocalTime?"local PC time":"CET server time"}.`,"Reset timers saved")});
+const eventsState={initialized:false,loading:false,events:[],selectedId:"",lastStatus:""};
+const eventsEl={status:document.getElementById("eventsStatusText"),refresh:document.getElementById("eventsRefresh"),timelineTitle:document.getElementById("eventsTimelineTitle"),timelineCount:document.getElementById("eventsTimelineCount"),timelineDays:document.getElementById("eventsTimelineDays"),timelineBars:document.getElementById("eventsTimelineBars"),endingRows:document.getElementById("eventsEndingRows"),activeRows:document.getElementById("eventsActiveRows"),endingCount:document.getElementById("eventsEndingCount"),activeCount:document.getElementById("eventsActiveCount"),detail:document.getElementById("eventsDetail")};
+function eventCategorySlug(category){return String(category||"Adventure").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")||"adventure"}
+function eventDateText(value){const date=new Date(value);return Number.isNaN(date.getTime())?"":date.toLocaleDateString([],{month:"short",day:"numeric"})}
+function eventTimeLeftText(event){if(event.timeLeftText)return event.timeLeftText;const hours=Number(event.remainingHours);if(!Number.isFinite(hours))return "Active";if(hours<24)return `${Math.max(1,Math.round(hours))}h left`;const days=Math.ceil(hours/24);return `${days}d left`}
+function eventProgress(event){const value=Number(event.progress);if(!Number.isFinite(value))return 48;return Math.max(5,Math.min(98,Math.round(value*100)))}
+function eventSummary(event){return event.summary||"Open the official event page for full rewards, rules, and schedule details."}
+function eventImage(event){return event.imageUrl||""}
+function setEventsStatus(message,error=false){if(eventsEl.status){eventsEl.status.textContent=message;eventsEl.status.closest(".eventsStatus")?.classList.toggle("error",error)}}
+function eventGroups(){const sorted=eventsState.events.slice().sort((a,b)=>(a.remainingHours??999999)-(b.remainingHours??999999)||String(a.title).localeCompare(String(b.title)));return{ending:sorted.filter(event=>event.status==="endingSoon"),active:sorted.filter(event=>event.status!=="endingSoon")}}
+function renderEventTimeline(){if(!eventsEl.timelineDays||!eventsEl.timelineBars)return;const today=new Date();const days=[];for(let i=0;i<14;i++){const date=new Date(today);date.setDate(today.getDate()+i);days.push(`<div class="eventsTimelineDay ${i===0?"today":""}"><span>${date.toLocaleDateString([],{weekday:"short"})}</span><strong>${date.getDate()}</strong></div>`)}eventsEl.timelineDays.innerHTML=days.join("");const bars=eventsState.events.slice(0,12).map(event=>`<button class="eventsTimelineBar" data-event-id="${escapeHtml(event.id)}" data-event-category="${eventCategorySlug(event.category)}" title="${escapeHtml(event.title)}">${escapeHtml(event.title)}</button>`);eventsEl.timelineBars.innerHTML=bars.join("")||`<div class="eventsEmpty">Official events will appear here after the first refresh.</div>`}
+function renderEventRows(events,target){if(!target)return;target.innerHTML=events.length?events.map(event=>{const image=eventImage(event);return `<article class="eventRow ${event.id===eventsState.selectedId?"selected":""}" data-event-id="${escapeHtml(event.id)}" data-event-category="${eventCategorySlug(event.category)}">${image?`<img class="eventThumb" src="${escapeHtml(image)}" alt="">`:`<div class="eventThumb"></div>`}<div class="eventMain"><strong>${escapeHtml(event.title)}</strong><span class="eventBadge">${escapeHtml(event.category||"Adventure")}</span></div><div class="eventDate">${escapeHtml(event.dateRangeText||eventDateText(event.endUtc)||"Official event")}</div><div class="eventProgress"><span style="width:${eventProgress(event)}%"></span></div><div class="eventTimeLeft">${escapeHtml(eventTimeLeftText(event))}</div></article>`}).join(""):`<div class="eventsEmpty">No official events in this group right now.</div>`}
+function renderEventDetail(){if(!eventsEl.detail)return;const event=eventsState.events.find(item=>item.id===eventsState.selectedId)||eventsState.events[0];if(!event){eventsEl.detail.innerHTML=`<div class="eventsEmpty">Official BDO events will appear here once loaded.</div>`;return;}const image=eventImage(event),category=escapeHtml(event.category||"Adventure"),timeLeft=escapeHtml(eventTimeLeftText(event));eventsEl.detail.innerHTML=`<div class="eventsDetailHero">${image?`<img src="${escapeHtml(image)}" alt="">`:""}<div class="eventsDetailHeroText"><span class="eventBadge" data-event-category="${eventCategorySlug(event.category)}">${category}</span><h2>${escapeHtml(event.title)}</h2></div></div><div class="eventsDetailBody"><div class="eventsDetailMeta"><span>${escapeHtml(event.dateRangeText||eventDateText(event.endUtc)||"Official schedule")}</span><span>${timeLeft}</span><span>${escapeHtml(event.source||"Official BDO")}</span></div><p class="eventsDetailSummary">${escapeHtml(eventSummary(event))}</p><button class="eventsOpen" data-open-url="${escapeHtml(event.url)}" type="button">Open Official Event &nbsp; &nearr;</button></div>`}
+function renderEvents(){const groups=eventGroups();if(eventsEl.endingCount)eventsEl.endingCount.textContent=`${groups.ending.length} event${groups.ending.length===1?"":"s"}`;if(eventsEl.activeCount)eventsEl.activeCount.textContent=`${groups.active.length} event${groups.active.length===1?"":"s"}`;if(eventsEl.timelineCount)eventsEl.timelineCount.textContent=`${eventsState.events.length} official event${eventsState.events.length===1?"":"s"}`;if(eventsEl.timelineTitle)eventsEl.timelineTitle.textContent="Official BDO Events";if(!eventsState.selectedId||!eventsState.events.some(event=>event.id===eventsState.selectedId))eventsState.selectedId=(groups.ending[0]||groups.active[0]||eventsState.events[0]||{}).id||"";renderEventTimeline();renderEventRows(groups.ending,eventsEl.endingRows);renderEventRows(groups.active,eventsEl.activeRows);renderEventDetail()}
+function applyEventsDashboard(data){eventsState.events=Array.isArray(data.events)?data.events:[];eventsState.lastStatus=String(data.status||"CACHED").toUpperCase();const date=new Date(data.lastAttempt||data.lastRefreshed);const time=Number.isNaN(date.getTime())?"":` - Last checked ${date.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}`;setEventsStatus(data.message||`${eventsState.lastStatus==="LIVE"?"Official events synced":"Cached official events loaded"}${time}`,Boolean(data.message));renderEvents()}
+async function loadEvents(force=false){if(eventsState.loading)return;eventsState.loading=true;if(eventsEl.refresh){eventsEl.refresh.disabled=true;eventsEl.refresh.textContent=force?"Refreshing...":"Loading..."}setEventsStatus(force?"Refreshing official BDO events...":"Loading official BDO events...");try{const data=await bridgeCall(force?"refreshEvents":"initializeEvents");applyEventsDashboard(data);if(force&&String(data.status||"").toUpperCase()==="LIVE")NotificationService.ShowSuccess("Official BDO events refreshed.","Events");else if(force&&data.message)NotificationService.ShowWarning(data.message,"Events");}catch(error){setEventsStatus(error.message||"Could not load official events.",true);NotificationService.ShowError(error.message||"Could not load official BDO events.");}finally{eventsState.loading=false;if(eventsEl.refresh){eventsEl.refresh.disabled=false;eventsEl.refresh.textContent="Refresh Events"}}}
+function initializeEvents(){if(!eventsState.initialized){eventsState.initialized=true;eventsEl.refresh?.addEventListener("click",()=>loadEvents(true));eventsEl.timelineBars?.addEventListener("click",event=>{const item=event.target.closest("[data-event-id]");if(!item)return;eventsState.selectedId=item.dataset.eventId;renderEvents()});eventsEl.endingRows?.addEventListener("click",event=>{const item=event.target.closest("[data-event-id]");if(!item)return;eventsState.selectedId=item.dataset.eventId;renderEvents()});eventsEl.activeRows?.addEventListener("click",event=>{const item=event.target.closest("[data-event-id]");if(!item)return;eventsState.selectedId=item.dataset.eventId;renderEvents()})}renderEvents();loadEvents(false)}
 initializeHomeDashboard();
 setTimeout(()=>initializeCoupons(),1000);
 setTimeout(()=>initializeUpdateChecker(),1600);
@@ -5288,7 +5418,7 @@ document.addEventListener("click", async event => {
 });
 
 let appViewTransitionTimer=null;
-const CINEMATIC_BACKGROUNDS=["homeView","calculatorView","marketView","portraitView","fontChangerView","couponsView","settingsView","resetTimersView","bracketsView","masteryBracketsView"].reduce((map,view,index)=>{map[view]=`Assets/CinematicBackgrounds/cinematic-${String(index+1).padStart(2,"0")}.jpg`;return map;},{lightstoneSetsView:"Assets/CinematicBackgrounds/cinematic-10.jpg"});
+const CINEMATIC_BACKGROUNDS=["homeView","calculatorView","marketView","portraitView","fontChangerView","couponsView","eventsView","settingsView","resetTimersView","bracketsView","masteryBracketsView"].reduce((map,view,index)=>{map[view]=`Assets/CinematicBackgrounds/cinematic-${String(Math.min(index+1,10)).padStart(2,"0")}.jpg`;return map;},{lightstoneSetsView:"Assets/CinematicBackgrounds/cinematic-10.jpg"});
 function updateCinematicBackground(viewId){const url=CINEMATIC_BACKGROUNDS[viewId]||CINEMATIC_BACKGROUNDS.homeView;document.body.style.setProperty("--cinematic-bg",`url("${url}")`)}
 function syncFixedChromeOffset(){
   const title=document.getElementById("windowTitleBar");
@@ -5305,6 +5435,7 @@ function initializeAppView(viewId){
   if(viewId === "portraitView") initializePortraitReplacer();
   if(viewId === "fontChangerView") initializeFontChanger();
   if(viewId === "couponsView") initializeCoupons();
+  if(viewId === "eventsView") initializeEvents();
   if(viewId === "resetTimersView") initializeResetTimers();
   if(viewId === "bracketsView") initializeBrackets();
   if(viewId === "masteryBracketsView") initializeMasteryBrackets();

@@ -10,6 +10,7 @@ internal sealed record AppPaths(string Root, string HtmlPath, string DatabasePat
 	public string CouponSettingsPath => Path.Combine(Root, "coupon_settings.json");
 
 	public string CouponIconsPath => Path.Combine(Root, "data", "icons", "coupons");
+	public string EventsCachePath => Path.Combine(Root, "events_cache.json");
 	public string ThemeAssetsPath => Path.Combine(Root, "ThemeAssets");
 	public string MasteryIconsPath => Path.Combine(Root, "Assets", "MasteryIcons");
 	public string FontGuidePath => Path.Combine(Root, "Assets", "FontGuide");

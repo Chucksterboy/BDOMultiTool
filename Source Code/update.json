@@ -1,6 +1,6 @@
 ﻿{
-    "version":  "v0.2",
+    "version":  "v0.3",
     "releaseUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest",
     "downloadUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest/download/BDO-Multi-Tool-Installer.exe",
-    "notes":  "Test release to verify the in-app update notification and direct installer download flow."
+    "notes":  "BDO Multi-Tool v0.3\n\n- Added the official BDO Events tab with grouped active/ending event cards, timeline, event artwork, and detail previews.\n- Moved Events into the lower navigation row so the top row has more breathing room.\n- Includes the latest UI/theme polish, reset timers, coupon/status improvements, Lightstone Sets, and Mastery Brackets work."
 }
