@@ -269,6 +269,25 @@ SELECT MAX(captured_utc) FROM (
 		}
 	}
 
+	public async Task<int> PruneOldMarketSamplesAsync(TimeSpan retention, CancellationToken cancellationToken)
+	{
+		DateTimeOffset cutoff = DateTimeOffset.UtcNow.Subtract(retention);
+		int removed = 0;
+		await using SqliteConnection connection = await OpenAsync(cancellationToken);
+		await using DbTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
+		string[] tables = ["snapshots", "outfit_snapshots"];
+		foreach (string table in tables)
+		{
+			await using SqliteCommand command = connection.CreateCommand();
+			command.Transaction = (SqliteTransaction)transaction;
+			command.CommandText = $"DELETE FROM {table} WHERE captured_utc < $cutoff;";
+			command.Parameters.AddWithValue("$cutoff", cutoff.ToString("O"));
+			removed += await command.ExecuteNonQueryAsync(cancellationToken);
+		}
+		await transaction.CommitAsync(cancellationToken);
+		return removed;
+	}
+
 	public async Task SyncOutfitCatalogAsync(IReadOnlyList<MarketItem> items, string region, CancellationToken cancellationToken)
 	{
 		DateTimeOffset now = DateTimeOffset.UtcNow;

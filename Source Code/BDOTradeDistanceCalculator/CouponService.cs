@@ -144,6 +144,8 @@ internal sealed class CouponService : IDisposable
 			?? new CouponCache(DateTimeOffset.UtcNow, "Manual", [], error);
 		CouponSettings settings = await ReadJsonAsync<CouponSettings>(paths.CouponSettingsPath, cancellationToken)
 			?? new CouponSettings(true, true, "", "all");
+		bool isStale = DateTimeOffset.UtcNow - cache.LastRefreshed > TimeSpan.FromHours(6);
+		int cacheAgeMinutes = Math.Max(0, (int)Math.Round((DateTimeOffset.UtcNow - cache.LastRefreshed).TotalMinutes));
 		var coupons = cache.Coupons.Where(c => !IsLikelyNonCouponToken(c.Code)).Select(c => new
 		{
 			c.Code,
@@ -167,6 +169,8 @@ internal sealed class CouponService : IDisposable
 			sourceUrl = SourceUrl,
 			lastRefreshed = cache.LastRefreshed,
 			lastAttempt,
+			isStale,
+			cacheAgeMinutes,
 			refreshDebug,
 			settings,
 			coupons,

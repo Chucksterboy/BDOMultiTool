@@ -1,6 +1,6 @@
 ﻿{
-    "version":  "v0.4",
+    "version":  "v0.5",
     "releaseUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest",
     "downloadUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest/download/BDO-Multi-Tool-Installer.exe",
-    "notes":  "BDO Multi-Tool v0.4\n\n- Polished the Events tab with the Garmoth-style timeline layout, chronological event ordering, varied event colors, and visible ending timers.\n- Added the vertical current-time marker and softened the current-day highlight so the date stays readable.\n- Rebuilt the installer so the latest Events tab changes are included."
+    "notes":  "BDO Multi-Tool v0.5\n\n- Fixed Events loading so cached data appears first instead of showing a blank Events tab.\n- Preserves the last good Events cache when the official BDO events page is down, empty, or under maintenance.\n- Added a backup Events cache fallback for safer future launches.\n- Included the recent stability polish for cached status text, event timeline updates, market sample retention, and clean warning-free builds."
 }

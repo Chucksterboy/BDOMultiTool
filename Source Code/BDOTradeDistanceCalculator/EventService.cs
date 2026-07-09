@@ -39,10 +39,14 @@ internal sealed class EventService : IDisposable
 	public async Task<object> InitializeAsync(CancellationToken cancellationToken)
 	{
 		EventCache? cache = await ReadJsonAsync<EventCache>(paths.EventsCachePath, cancellationToken);
-		if (cache == null || DateTimeOffset.UtcNow - cache.LastRefreshed > TimeSpan.FromHours(3))
-			return await RefreshAsync(cancellationToken);
+		if (HasEvents(cache))
+			return BuildDashboard(cache!, "CACHED", null);
 
-		return BuildDashboard(cache, "CACHED", null);
+		EventCache? backup = await ReadJsonAsync<EventCache>(paths.EventsBackupCachePath, cancellationToken);
+		if (HasEvents(backup))
+			return BuildDashboard(backup!, "CACHED", "Showing saved Events data while the official page refreshes.");
+
+		return await RefreshAsync(cancellationToken);
 	}
 
 	public async Task<object> RefreshAsync(CancellationToken cancellationToken)
@@ -54,6 +58,8 @@ internal sealed class EventService : IDisposable
 			logger.Info("Events official source URL: " + EventsUrl);
 			string html = await GetStringAsync(EventsUrl, cancellationToken);
 			List<EventEntry> events = ParseList(html);
+			if (events.Count == 0)
+				throw new InvalidDataException(GetEmptyEventsReason(html));
 
 			foreach (EventEntry entry in events.Take(18).ToArray())
 			{
@@ -78,6 +84,7 @@ internal sealed class EventService : IDisposable
 
 			EventCache cache = new(attemptTime, EventsUrl, events, null);
 			await WriteJsonAsync(paths.EventsCachePath, cache, cancellationToken);
+			await WriteJsonAsync(paths.EventsBackupCachePath, cache, cancellationToken);
 			logger.Info($"Events parsed: {events.Count}.");
 			logger.Info("Events cache updated: yes.");
 			return BuildDashboard(cache, "LIVE", null, attemptTime);
@@ -87,6 +94,12 @@ internal sealed class EventService : IDisposable
 			logger.Warn("Events refresh failed reason: " + ex.Message);
 			EventCache cache = await ReadJsonAsync<EventCache>(paths.EventsCachePath, cancellationToken)
 				?? new EventCache(attemptTime, EventsUrl, [], "No official events could be loaded yet.");
+			if (!HasEvents(cache))
+			{
+				EventCache? backup = await ReadJsonAsync<EventCache>(paths.EventsBackupCachePath, cancellationToken);
+				if (HasEvents(backup))
+					cache = backup!;
+			}
 			return BuildDashboard(cache, "CACHED", "Could not refresh official events. Showing cached data. " + ex.Message, attemptTime);
 		}
 	}
@@ -100,6 +113,17 @@ internal sealed class EventService : IDisposable
 			throw new InvalidDataException($"Official events source returned HTTP {(int)response.StatusCode}.");
 		return html;
 	}
+
+	private static string GetEmptyEventsReason(string html)
+	{
+		if (html.Contains("Under Maintenance", StringComparison.OrdinalIgnoreCase)
+			|| html.Contains("Website Maintenance", StringComparison.OrdinalIgnoreCase))
+			return "The official BDO events page is currently under maintenance.";
+
+		return "The official BDO events page loaded, but no event cards could be parsed.";
+	}
+
+	private static bool HasEvents(EventCache? cache) => cache?.Events is { Count: > 0 };
 
 	private async Task<EventEntry> EnrichAsync(EventEntry entry, CancellationToken cancellationToken)
 	{
@@ -258,6 +282,8 @@ internal sealed class EventService : IDisposable
 
 	private static object BuildDashboard(EventCache cache, string status, string? message, DateTimeOffset? lastAttempt = null)
 	{
+		bool isStale = DateTimeOffset.UtcNow - cache.LastRefreshed > TimeSpan.FromHours(3);
+		int cacheAgeMinutes = Math.Max(0, (int)Math.Round((DateTimeOffset.UtcNow - cache.LastRefreshed).TotalMinutes));
 		var events = cache.Events.Select(x => new
 		{
 			x.Id,
@@ -284,6 +310,8 @@ internal sealed class EventService : IDisposable
 			sourceUrl = cache.SourceUrl,
 			lastRefreshed = cache.LastRefreshed,
 			lastAttempt,
+			isStale,
+			cacheAgeMinutes,
 			events,
 			activeCount = events.Count(x => x.Status == "active"),
 			endingSoonCount = events.Count(x => x.Status == "endingSoon"),

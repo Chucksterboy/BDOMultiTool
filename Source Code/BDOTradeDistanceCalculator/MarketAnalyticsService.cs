@@ -13,6 +13,8 @@ internal sealed class MarketAnalyticsService : IDisposable
 
 	public static readonly TimeSpan DefaultCollectorInterval = TimeSpan.FromHours(3);
 
+	private static readonly TimeSpan MarketSampleRetention = TimeSpan.FromDays(180);
+
 	private readonly MarketDatabase database;
 
 	private readonly IMarketDataProvider provider;
@@ -58,7 +60,7 @@ internal sealed class MarketAnalyticsService : IDisposable
 			return;
 		}
 		ResetTimer();
-		Task.Run(async delegate
+		_ = Task.Run(async delegate
 		{
 			try
 			{
@@ -234,6 +236,14 @@ internal sealed class MarketAnalyticsService : IDisposable
 			if (!refreshedAny)
 			{
 				this.StatusChanged?.Invoke(this, "EU and NA market samples are already up to date.");
+			}
+			else
+			{
+				int pruned = await database.PruneOldMarketSamplesAsync(MarketSampleRetention, cancellationToken);
+				if (pruned > 0)
+				{
+					logger.Info($"Market sample retention removed {pruned:N0} old row(s).");
+				}
 			}
 			this.DataChanged?.Invoke(this, EventArgs.Empty);
 		}

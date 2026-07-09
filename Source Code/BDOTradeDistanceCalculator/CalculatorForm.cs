@@ -480,7 +480,7 @@ internal sealed class CalculatorForm : Form
 	private void SpeakText(string text)
 	{
 		string safeText = string.IsNullOrWhiteSpace(text) ? "BDO Multi-Tool alert." : text.Trim();
-		Task.Run(delegate
+		_ = Task.Run(delegate
 		{
 			try
 			{
