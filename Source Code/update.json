@@ -1,6 +1,6 @@
 ﻿{
-    "version":  "v0.5",
+    "version":  "v0.6",
     "releaseUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest",
     "downloadUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest/download/BDO-Multi-Tool-Installer.exe",
-    "notes":  "BDO Multi-Tool v0.5\n\n- Fixed Events loading so cached data appears first instead of showing a blank Events tab.\n- Preserves the last good Events cache when the official BDO events page is down, empty, or under maintenance.\n- Added a backup Events cache fallback for safer future launches.\n- Included the recent stability polish for cached status text, event timeline updates, market sample retention, and clean warning-free builds."
+    "notes":  "BDO Multi-Tool v0.6\n\n- Fixed Events loading when the official BDO site blocks background requests.\n- Added a hidden browser fallback so Events can parse the rendered official page.\n- Improved Events parsing for current official page markup and protected empty-cache behavior.\n- Keeps the last good Events cache instead of showing a blank tab when refresh fails."
 }

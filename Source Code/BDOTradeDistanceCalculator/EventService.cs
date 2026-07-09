@@ -14,7 +14,7 @@ namespace BDOTradeDistanceCalculator;
 
 internal sealed class EventService : IDisposable
 {
-	private const string EventsUrl = "https://www.naeu.playblackdesert.com/en-US/News/Notice?boardType=3&progressType=1";
+	internal const string OfficialEventsUrl = "https://www.naeu.playblackdesert.com/en-US/News/Notice?boardType=3&progressType=1";
 	private static readonly Uri SiteRoot = new("https://www.naeu.playblackdesert.com");
 	private readonly AppPaths paths;
 	private readonly AppLogger logger;
@@ -55,12 +55,38 @@ internal sealed class EventService : IDisposable
 		try
 		{
 			logger.Info("Events refresh started.");
-			logger.Info("Events official source URL: " + EventsUrl);
-			string html = await GetStringAsync(EventsUrl, cancellationToken);
-			List<EventEntry> events = ParseList(html);
-			if (events.Count == 0)
-				throw new InvalidDataException(GetEmptyEventsReason(html));
+			logger.Info("Events official source URL: " + OfficialEventsUrl);
+			string html = await GetStringAsync(OfficialEventsUrl, cancellationToken);
+			return await BuildAndCacheDashboardAsync(html, attemptTime, enrichDetails: true, cancellationToken);
+		}
+		catch (Exception ex)
+		{
+			logger.Warn("Events refresh failed reason: " + ex.Message);
+			EventCache cache = await ReadJsonAsync<EventCache>(paths.EventsCachePath, cancellationToken)
+				?? new EventCache(attemptTime, OfficialEventsUrl, [], "No official events could be loaded yet.");
+			if (!HasEvents(cache))
+			{
+				EventCache? backup = await ReadJsonAsync<EventCache>(paths.EventsBackupCachePath, cancellationToken);
+				if (HasEvents(backup))
+					cache = backup!;
+			}
+			return BuildDashboard(cache, "CACHED", "Could not refresh official events. Showing cached data. " + ex.Message, attemptTime);
+		}
+	}
 
+	public Task<object> RefreshFromRenderedHtmlAsync(string html, CancellationToken cancellationToken)
+	{
+		return BuildAndCacheDashboardAsync(html, DateTimeOffset.UtcNow, enrichDetails: false, cancellationToken);
+	}
+
+	private async Task<object> BuildAndCacheDashboardAsync(string html, DateTimeOffset attemptTime, bool enrichDetails, CancellationToken cancellationToken)
+	{
+		List<EventEntry> events = ParseList(html);
+		if (events.Count == 0)
+			throw new InvalidDataException(GetEmptyEventsReason(html));
+
+		if (enrichDetails)
+		{
 			foreach (EventEntry entry in events.Take(18).ToArray())
 			{
 				cancellationToken.ThrowIfCancellationRequested();
@@ -76,32 +102,19 @@ internal sealed class EventService : IDisposable
 					logger.Warn($"Event detail could not be read for {entry.Id}: {ex.Message}");
 				}
 			}
-
-			events = events
-				.OrderBy(x => x.RemainingHours ?? int.MaxValue)
-				.ThenBy(x => x.Title, StringComparer.OrdinalIgnoreCase)
-				.ToList();
-
-			EventCache cache = new(attemptTime, EventsUrl, events, null);
-			await WriteJsonAsync(paths.EventsCachePath, cache, cancellationToken);
-			await WriteJsonAsync(paths.EventsBackupCachePath, cache, cancellationToken);
-			logger.Info($"Events parsed: {events.Count}.");
-			logger.Info("Events cache updated: yes.");
-			return BuildDashboard(cache, "LIVE", null, attemptTime);
 		}
-		catch (Exception ex)
-		{
-			logger.Warn("Events refresh failed reason: " + ex.Message);
-			EventCache cache = await ReadJsonAsync<EventCache>(paths.EventsCachePath, cancellationToken)
-				?? new EventCache(attemptTime, EventsUrl, [], "No official events could be loaded yet.");
-			if (!HasEvents(cache))
-			{
-				EventCache? backup = await ReadJsonAsync<EventCache>(paths.EventsBackupCachePath, cancellationToken);
-				if (HasEvents(backup))
-					cache = backup!;
-			}
-			return BuildDashboard(cache, "CACHED", "Could not refresh official events. Showing cached data. " + ex.Message, attemptTime);
-		}
+
+		events = events
+			.OrderBy(x => x.RemainingHours ?? int.MaxValue)
+			.ThenBy(x => x.Title, StringComparer.OrdinalIgnoreCase)
+			.ToList();
+
+		EventCache cache = new(attemptTime, OfficialEventsUrl, events, null);
+		await WriteJsonAsync(paths.EventsCachePath, cache, cancellationToken);
+		await WriteJsonAsync(paths.EventsBackupCachePath, cache, cancellationToken);
+		logger.Info($"Events parsed: {events.Count}.");
+		logger.Info("Events cache updated: yes.");
+		return BuildDashboard(cache, "LIVE", null, attemptTime);
 	}
 
 	private async Task<string> GetStringAsync(string url, CancellationToken cancellationToken)
@@ -116,6 +129,11 @@ internal sealed class EventService : IDisposable
 
 	private static string GetEmptyEventsReason(string html)
 	{
+		if (html.Contains("_Incapsula_Resource", StringComparison.OrdinalIgnoreCase)
+			|| html.Contains("Incapsula incident", StringComparison.OrdinalIgnoreCase)
+			|| html.Contains("Request unsuccessful", StringComparison.OrdinalIgnoreCase))
+			return "The official BDO events page blocked the app's background request.";
+
 		if (html.Contains("Under Maintenance", StringComparison.OrdinalIgnoreCase)
 			|| html.Contains("Website Maintenance", StringComparison.OrdinalIgnoreCase))
 			return "The official BDO events page is currently under maintenance.";
@@ -163,53 +181,85 @@ internal sealed class EventService : IDisposable
 		HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
 		foreach (Match match in itemRegex.Matches(listHtml))
 		{
-			string itemHtml = match.Groups["item"].Value;
-			string url = ReadGroup(itemHtml, "<a\\s+href=\"(?<value>[^\"]*groupContentNo=(?<id>\\d+)[^\"]*)\"");
-			string id = ReadGroup(itemHtml, "<a\\s+href=\"[^\"]*groupContentNo=(?<value>\\d+)[^\"]*\"");
-			if (!seen.Add(id))
-				continue;
+			AddParsedEvent(entries, seen, match.Groups["item"].Value);
+		}
 
-			string title = Clean(FirstNonBlank(
-				ReadGroup(itemHtml, "<strong[^>]*class=\"[^\"]*title[^\"]*\"[^>]*>\\s*(?:<em[^>]*>)?(?<value>[\\s\\S]*?)(?:</em>)?\\s*</strong>"),
-				ReadGroup(itemHtml, "<img[^>]+alt=\"(?<value>[^\"]+)\"")));
-			if (string.IsNullOrWhiteSpace(title))
-				continue;
-
-			string image = ReadGroup(itemHtml, "<img[^>]+src=\"(?<value>[^\"]+)\"");
-			Match countMatch = Regex.Match(
-				itemHtml,
-				"<span[^>]*class=\"[^\"]*count[^\"]*\"[^>]*>[\\s\\S]*?<em[^>]*>\\s*(?<count>\\d+)\\s*</em>\\s*(?<unit>[^<]+)",
+		if (entries.Count == 0)
+		{
+			Regex anchorRegex = new(
+				"<a\\b(?=[^>]*groupContentNo=)(?<attrs>[^>]*)>(?<item>[\\s\\S]*?)</a>",
 				RegexOptions.IgnoreCase,
 				TimeSpan.FromSeconds(2));
-			int remainingValue = countMatch.Success && int.TryParse(countMatch.Groups["count"].Value, out int parsed) ? parsed : 0;
-			string rawUnit = countMatch.Success ? Clean(countMatch.Groups["unit"].Value) : "";
-			int? remainingHours = countMatch.Success ? ToRemainingHours(remainingValue, rawUnit) : null;
-			string timeLeft = countMatch.Success ? $"{remainingValue} {rawUnit}".Trim() : "Official event";
-			string status = remainingHours.HasValue && remainingHours.Value <= 72 ? "endingSoon" : "active";
-			DateTimeOffset? end = remainingHours.HasValue ? DateTimeOffset.UtcNow.AddHours(Math.Max(1, remainingHours.Value)) : null;
-
-			entries.Add(new EventEntry(
-				id,
-				title,
-				InferCategory(title),
-				NormalizeUrl(url),
-				NormalizeUrl(image),
-				"",
-				null,
-				null,
-				end,
-				timeLeft,
-				remainingHours,
-				status,
-				EstimateProgress(null, end, remainingHours),
-				FormatDateRange(null, end, timeLeft),
-				"Official BDO"));
+			foreach (Match match in anchorRegex.Matches(listHtml))
+			{
+				AddParsedEvent(entries, seen, "<a " + match.Groups["attrs"].Value + ">" + match.Groups["item"].Value + "</a>");
+			}
 		}
 
 		if (entries.Count == 0 && html.Contains("event_list", StringComparison.OrdinalIgnoreCase))
 			throw new InvalidDataException("Official event cards were found, but none could be parsed.");
 
 		return entries;
+	}
+
+	private static void AddParsedEvent(List<EventEntry> entries, HashSet<string> seen, string itemHtml)
+	{
+		string url = FirstNonBlank(
+			ReadGroup(itemHtml, "<a\\b[^>]+href=\"(?<value>[^\"]*groupContentNo=(?<id>\\d+)[^\"]*)\""),
+			ReadGroup(itemHtml, "<a\\b[^>]+href='(?<value>[^']*groupContentNo=(?<id>\\d+)[^']*)'"));
+		string id = FirstNonBlank(
+			ReadGroup(itemHtml, "<a\\b[^>]+href=\"[^\"]*groupContentNo=(?<value>\\d+)[^\"]*\""),
+			ReadGroup(itemHtml, "<a\\b[^>]+href='[^']*groupContentNo=(?<value>\\d+)[^']*'"));
+		if (string.IsNullOrWhiteSpace(id) || !seen.Add(id))
+			return;
+
+		string title = Clean(FirstNonBlank(
+			ReadGroup(itemHtml, "<strong[^>]*class=\"[^\"]*title[^\"]*\"[^>]*>\\s*(?:<em[^>]*>)?(?<value>[\\s\\S]*?)(?:</em>)?\\s*</strong>"),
+			ReadGroup(itemHtml, "<[^>]+class=\"[^\"]*(?:title|subject|name)[^\"]*\"[^>]*>(?<value>[\\s\\S]*?)</[^>]+>"),
+			ReadGroup(itemHtml, "<img[^>]+alt=\"(?<value>[^\"]+)\"")));
+		if (string.IsNullOrWhiteSpace(title))
+			title = Truncate(Clean(itemHtml), 120);
+		if (string.IsNullOrWhiteSpace(title))
+			return;
+
+		string image = ReadGroup(itemHtml, "<img[^>]+src=\"(?<value>[^\"]+)\"");
+		Match countMatch = Regex.Match(
+			itemHtml,
+			"<span[^>]*class=\"[^\"]*count[^\"]*\"[^>]*>[\\s\\S]*?<em[^>]*>\\s*(?<count>\\d+)\\s*</em>\\s*(?<unit>[^<]+)",
+			RegexOptions.IgnoreCase,
+			TimeSpan.FromSeconds(2));
+		if (!countMatch.Success)
+		{
+			countMatch = Regex.Match(
+				Clean(itemHtml),
+				"(?<count>\\d+)\\s*(?<unit>days?|hours?|minutes?)\\s*(?:left|remaining)?",
+				RegexOptions.IgnoreCase,
+				TimeSpan.FromSeconds(2));
+		}
+
+		int remainingValue = countMatch.Success && int.TryParse(countMatch.Groups["count"].Value, out int parsed) ? parsed : 0;
+		string rawUnit = countMatch.Success ? Clean(countMatch.Groups["unit"].Value) : "";
+		int? remainingHours = countMatch.Success ? ToRemainingHours(remainingValue, rawUnit) : null;
+		string timeLeft = countMatch.Success ? $"{remainingValue} {rawUnit}".Trim() : "Official event";
+		string status = remainingHours.HasValue && remainingHours.Value <= 72 ? "endingSoon" : "active";
+		DateTimeOffset? end = remainingHours.HasValue ? DateTimeOffset.UtcNow.AddHours(Math.Max(1, remainingHours.Value)) : null;
+
+		entries.Add(new EventEntry(
+			id,
+			title,
+			InferCategory(title),
+			NormalizeUrl(url),
+			NormalizeUrl(image),
+			"",
+			null,
+			null,
+			end,
+			timeLeft,
+			remainingHours,
+			status,
+			EstimateProgress(null, end, remainingHours),
+			FormatDateRange(null, end, timeLeft),
+			"Official BDO"));
 	}
 
 	private static string ReadGroup(string html, string pattern)

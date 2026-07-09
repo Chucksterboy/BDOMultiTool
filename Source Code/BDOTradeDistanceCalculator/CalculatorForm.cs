@@ -81,6 +81,8 @@ internal sealed class CalculatorForm : Form
 
 	private readonly WebView2 webView;
 
+	private WebView2? eventsBrowserView;
+
 	private readonly Label loadingLabel;
 
 	private readonly PortraitReplacerService portraitReplacerService;
@@ -584,6 +586,7 @@ internal sealed class CalculatorForm : Form
 		try { taskbarBadgeIcon?.Dispose(); } catch { }
 		try { trayBadgeIcon?.Dispose(); } catch { }
 		try { appIcon.Dispose(); } catch { }
+		try { eventsBrowserView?.Dispose(); } catch { }
 		try { webView.Dispose(); } catch { }
 		base.OnFormClosed(e);
 	}
@@ -721,9 +724,9 @@ internal sealed class CalculatorForm : Form
 		case "refreshCoupons":
 			return await couponService.RefreshAsync(CancellationToken.None);
 		case "initializeEvents":
-			return await eventService.InitializeAsync(CancellationToken.None);
+			return await LoadEventsWithBrowserFallbackAsync(forceRefresh: false);
 		case "refreshEvents":
-			return await eventService.RefreshAsync(CancellationToken.None);
+			return await LoadEventsWithBrowserFallbackAsync(forceRefresh: true);
 		case "checkForUpdates":
 			return await updateCheckerService.CheckAsync(CancellationToken.None);
 		case "saveCouponSettings":
@@ -909,6 +912,137 @@ internal sealed class CalculatorForm : Form
 			}
 		}
 		}
+	}
+
+	private async Task<object> LoadEventsWithBrowserFallbackAsync(bool forceRefresh)
+	{
+		object dashboard = forceRefresh
+			? await eventService.RefreshAsync(CancellationToken.None)
+			: await eventService.InitializeAsync(CancellationToken.None);
+
+		if (EventDashboardHasEvents(dashboard))
+			return dashboard;
+
+		try
+		{
+			logger.Info("Events browser fallback started.");
+			string html = await ReadOfficialEventsHtmlWithBrowserAsync(CancellationToken.None);
+			object refreshed = await eventService.RefreshFromRenderedHtmlAsync(html, CancellationToken.None);
+			logger.Info("Events browser fallback succeeded.");
+			return refreshed;
+		}
+		catch (Exception ex)
+		{
+			logger.Warn("Events browser fallback failed: " + ex.Message);
+			return dashboard;
+		}
+	}
+
+	private static bool EventDashboardHasEvents(object dashboard)
+	{
+		try
+		{
+			JsonElement json = JsonSerializer.SerializeToElement(dashboard, JsonOptions);
+			return json.TryGetProperty("totalCount", out JsonElement total)
+				&& total.ValueKind == JsonValueKind.Number
+				&& total.GetInt32() > 0;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	private async Task<string> ReadOfficialEventsHtmlWithBrowserAsync(CancellationToken cancellationToken)
+	{
+		using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+		timeout.CancelAfter(TimeSpan.FromSeconds(35));
+		WebView2 browser = await EnsureEventsBrowserAsync(timeout.Token);
+		await NavigateEventsBrowserAsync(browser, EventService.OfficialEventsUrl, timeout.Token);
+
+		string latestHtml = "";
+		for (int attempt = 0; attempt < 18; attempt++)
+		{
+			timeout.Token.ThrowIfCancellationRequested();
+			latestHtml = await ReadBrowserHtmlAsync(browser);
+			if (LooksLikeOfficialEventsPage(latestHtml))
+				return latestHtml;
+			await Task.Delay(1000, timeout.Token);
+		}
+
+		return latestHtml;
+	}
+
+	private async Task<WebView2> EnsureEventsBrowserAsync(CancellationToken cancellationToken)
+	{
+		if (eventsBrowserView is { IsDisposed: false, CoreWebView2: not null })
+			return eventsBrowserView;
+
+		eventsBrowserView?.Dispose();
+		eventsBrowserView = new WebView2
+		{
+			Location = new Point(-32000, -32000),
+			Size = new Size(1, 1),
+			TabStop = false,
+			Visible = true
+		};
+		Controls.Add(eventsBrowserView);
+		eventsBrowserView.SendToBack();
+
+		string userDataFolder = Path.Combine(paths.WebViewDataPath, "events-page");
+		CoreWebView2Environment environment = await CoreWebView2Environment.CreateAsync(null, userDataFolder);
+		await eventsBrowserView.EnsureCoreWebView2Async(environment);
+		eventsBrowserView.CoreWebView2.Settings.AreDevToolsEnabled = false;
+		eventsBrowserView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+		eventsBrowserView.CoreWebView2.Settings.IsStatusBarEnabled = false;
+		eventsBrowserView.CoreWebView2.NewWindowRequested += delegate(object? _, CoreWebView2NewWindowRequestedEventArgs args)
+		{
+			args.Handled = true;
+		};
+		cancellationToken.ThrowIfCancellationRequested();
+		return eventsBrowserView;
+	}
+
+	private static async Task NavigateEventsBrowserAsync(WebView2 browser, string url, CancellationToken cancellationToken)
+	{
+		TaskCompletionSource navigation = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		void Handler(object? _, CoreWebView2NavigationCompletedEventArgs args)
+		{
+			if (args.IsSuccess)
+				navigation.TrySetResult();
+			else
+				navigation.TrySetException(new InvalidDataException("The official Events page did not finish loading in the hidden browser."));
+		}
+
+		browser.CoreWebView2.NavigationCompleted += Handler;
+		using CancellationTokenRegistration registration = cancellationToken.Register(() => navigation.TrySetCanceled(cancellationToken));
+		try
+		{
+			browser.CoreWebView2.Navigate(url);
+			await navigation.Task;
+		}
+		finally
+		{
+			browser.CoreWebView2.NavigationCompleted -= Handler;
+		}
+	}
+
+	private static async Task<string> ReadBrowserHtmlAsync(WebView2 browser)
+	{
+		string json = await browser.CoreWebView2.ExecuteScriptAsync("document.documentElement.outerHTML");
+		return JsonSerializer.Deserialize<string>(json, JsonOptions) ?? "";
+	}
+
+	private static bool LooksLikeOfficialEventsPage(string html)
+	{
+		if (string.IsNullOrWhiteSpace(html))
+			return false;
+		if (html.Contains("_Incapsula_Resource", StringComparison.OrdinalIgnoreCase)
+			|| html.Contains("Incapsula incident", StringComparison.OrdinalIgnoreCase)
+			|| html.Contains("Request unsuccessful", StringComparison.OrdinalIgnoreCase))
+			return false;
+		return html.Contains("groupContentNo=", StringComparison.OrdinalIgnoreCase)
+			|| html.Contains("event_list", StringComparison.OrdinalIgnoreCase);
 	}
 
 	private async Task<object> ExportCouponsAsync()
