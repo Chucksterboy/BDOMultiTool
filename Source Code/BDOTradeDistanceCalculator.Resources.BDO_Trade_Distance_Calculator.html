@@ -2480,9 +2480,9 @@
   .eventsStatus{display:flex;align-items:center;gap:10px;color:var(--ui-text-secondary);font-size:12px;white-space:nowrap}
   .eventsStatus i{width:9px;height:9px;border-radius:50%;background:var(--ui-success);box-shadow:0 0 14px var(--ui-success)}
   .eventsStatus.error i{background:var(--ui-error);box-shadow:0 0 14px var(--ui-error)}
-  .eventsRefresh{height:42px;padding:0 18px;border:1px solid color-mix(in srgb,var(--ui-accent) 48%,var(--ui-border));background:color-mix(in srgb,var(--ui-card) 84%,transparent);color:var(--ui-text);font-weight:800;cursor:pointer}
-  .eventsRefresh:hover{border-color:var(--ui-accent);color:var(--ui-accent)}
-  .eventsTimeline{position:relative;overflow-x:auto;overflow-y:hidden;border:1px solid color-mix(in srgb,var(--ui-accent) 34%,var(--ui-border));border-radius:12px;background:linear-gradient(180deg,color-mix(in srgb,#11151a 82%,var(--ui-panel)),color-mix(in srgb,#080a0d 88%,var(--ui-card)));padding:22px 24px 26px;margin-bottom:16px;box-shadow:0 18px 44px rgba(0,0,0,.24),inset 0 1px color-mix(in srgb,#fff 8%,transparent);scrollbar-width:none}
+  .eventsRefresh{height:42px;padding:0 18px;border:1px solid color-mix(in srgb,var(--ui-warning) 78%,#fff)!important;background:linear-gradient(135deg,var(--ui-warning),color-mix(in srgb,var(--ui-accent) 62%,var(--ui-warning)))!important;color:#10120b!important;font-weight:900;cursor:pointer;box-shadow:0 0 22px color-mix(in srgb,var(--ui-warning) 42%,transparent),inset 0 1px rgba(255,255,255,.42)!important;text-shadow:none!important}
+  .eventsRefresh:hover{border-color:#fff4bd!important;background:linear-gradient(135deg,color-mix(in srgb,var(--ui-warning) 82%,#fff),color-mix(in srgb,var(--ui-accent) 72%,var(--ui-warning)))!important;color:#070907!important;filter:brightness(1.05)}
+  .eventsTimeline{position:relative;overflow-x:auto;overflow-y:hidden;border:1px solid color-mix(in srgb,var(--ui-accent) 34%,var(--ui-border));border-radius:12px;background:linear-gradient(180deg,color-mix(in srgb,#11151a 82%,var(--ui-panel)),color-mix(in srgb,#080a0d 88%,var(--ui-card)));padding:22px 24px 26px;margin-bottom:0;box-shadow:0 18px 44px rgba(0,0,0,.24),inset 0 1px color-mix(in srgb,#fff 8%,transparent);scrollbar-width:none}
   .eventsTimeline::-webkit-scrollbar{display:none}
   .eventsTimelineTop{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:1344px;margin-bottom:8px;color:var(--ui-text-secondary);font-size:12px}
   .eventsTimelineTop strong{color:var(--ui-text);font-size:20px;letter-spacing:.01em}
@@ -2505,7 +2505,7 @@
 .eventsTimelineBarText{position:relative;z-index:1;display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;text-shadow:0 2px 4px rgba(0,0,0,.72)!important}
 .eventsTimelinePill{position:absolute;z-index:3;right:8px;top:50%;transform:translateY(-50%);padding:3px 7px;border-radius:999px;background:#e8edf2;color:#121820;font-size:12px;font-weight:900;box-shadow:0 6px 14px rgba(0,0,0,.26);text-shadow:none!important}
   .eventsTimelineBar:hover,.eventsTimelineBar.selected{filter:brightness(1.12);transform:translateY(-1px);box-shadow:0 12px 26px rgba(0,0,0,.28),0 0 20px color-mix(in srgb,var(--event-color) 32%,transparent),inset 0 1px rgba(255,255,255,.2)}
-  .eventsLayout{display:grid;grid-template-columns:minmax(560px,1.7fr) minmax(380px,.86fr);gap:18px;align-items:start}
+  .eventsLayout{display:grid;grid-template-columns:minmax(680px,1.75fr) minmax(360px,.62fr);gap:18px;align-items:start}
   .eventsListPanel,.eventsDetail{border:1px solid var(--ui-border);border-radius:12px;background:linear-gradient(145deg,color-mix(in srgb,var(--ui-panel) 82%,transparent),color-mix(in srgb,var(--ui-card) 94%,black));box-shadow:0 22px 55px rgba(0,0,0,.18);overflow:hidden}
   .eventsGroup{padding:16px 16px 8px}
   .eventsGroup + .eventsGroup{border-top:1px solid var(--ui-border)}
@@ -3869,22 +3869,12 @@ body[data-style="custom"] .navFrame{
       </div>
       <div class="eventsStatus"><i></i><span id="eventsStatusText">Official events loading...</span><button id="eventsRefresh" class="eventsRefresh" type="button">Refresh Events</button></div>
     </header>
-    <section class="eventsTimeline" aria-label="Official event timeline">
-      <div class="eventsTimelineTop"><strong id="eventsTimelineTitle">Official BDO Events</strong><span id="eventsTimelineCount">0 active</span></div>
-      <div id="eventsTimelineDays" class="eventsTimelineDays"></div>
-      <div id="eventsTimelineBars" class="eventsTimelineBars"></div>
-    </section>
     <section class="eventsLayout">
-      <div class="eventsListPanel">
-        <div class="eventsGroup" data-event-group="endingSoon">
-          <h2 class="eventsGroupTitle"><i></i>Ending Soon <span id="eventsEndingCount">0 events</span></h2>
-          <div id="eventsEndingRows" class="eventRows"><div class="eventsEmpty">Loading official events...</div></div>
-        </div>
-        <div class="eventsGroup" data-event-group="active">
-          <h2 class="eventsGroupTitle"><i></i>Active Now <span id="eventsActiveCount">0 events</span></h2>
-          <div id="eventsActiveRows" class="eventRows"></div>
-        </div>
-      </div>
+      <section class="eventsTimeline" aria-label="Official event timeline">
+        <div class="eventsTimelineTop"><strong id="eventsTimelineTitle">Official BDO Events</strong><span id="eventsTimelineCount">0 active</span></div>
+        <div id="eventsTimelineDays" class="eventsTimelineDays"></div>
+        <div id="eventsTimelineBars" class="eventsTimelineBars"></div>
+      </section>
       <aside id="eventsDetail" class="eventsDetail">
         <div class="eventsEmpty">Select an event to see its details.</div>
       </aside>
@@ -5311,15 +5301,15 @@ const HOME_SERVER_TIME_LABEL = "CET";
 const HOME_DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
 const HOME_DAY_LABELS = {Monday:"Mon",Tuesday:"Tue",Wednesday:"Wed",Thursday:"Thu",Friday:"Fri",Saturday:"Sat",Sunday:"Sun"};
 const HOME_DAY_INDEX = {Mon:0,Tue:1,Wed:2,Thu:3,Fri:4,Sat:5,Sun:6};
-const HOME_BOSS_TIMES = ["00:15","02:00","05:00","09:00","12:00","14:00","16:00","19:00","19:15","22:15","23:15"];
+const HOME_BOSS_TIMES = ["00:15","02:00","12:00","14:00","16:00","19:00","19:15","22:15","23:15"];
 const HOME_BOSS_SCHEDULE = {
-  Monday:{"00:15":["Karanda","Kutum","Uturi"],"02:00":["Karanda","Bulgasal"],"05:00":["Kzarka"],"09:00":["Kzarka"],"12:00":["Offin"],"14:00":["Garmoth"],"16:00":["Kutum","Uturi"],"19:00":["Nouver","Golden Pig King","Bulgasal"],"19:15":[],"22:15":["Kzarka","Sangoon","Uturi"],"23:15":["Garmoth"]},
-  Tuesday:{"00:15":["Karanda","Golden Pig King"],"02:00":["Kutum","Sangoon"],"05:00":["Kzarka"],"09:00":["Nouver"],"12:00":["Kutum"],"14:00":["Garmoth"],"16:00":["Nouver","Golden Pig King"],"19:00":["Karanda","Bulgasal","Uturi"],"19:15":[],"22:15":["Quint","Muraka","Golden Pig King","Sangoon"],"23:15":["Garmoth"]},
-  Wednesday:{"00:15":["Kzarka","Kutum","Bulgasal"],"02:00":["Karanda","Golden Pig King"],"05:00":["Kzarka"],"09:00":["Karanda"],"12:00":["Nouver"],"14:00":["Garmoth"],"16:00":["Kutum","Offin","Bulgasal"],"19:00":["Vell"],"19:15":[],"22:15":["Karanda","Kzarka","Sangoon","Uturi"],"23:15":["Garmoth"]},
-  Thursday:{"00:15":["Nouver","Bulgasal"],"02:00":["Kutum","Sangoon"],"05:00":["Nouver"],"09:00":["Kutum"],"12:00":[],"14:00":["Garmoth"],"16:00":["Kzarka","Uturi"],"19:00":["Kutum","Sangoon","Bulgasal"],"19:15":[],"22:15":["Quint","Muraka","Golden Pig King","Uturi"],"23:15":["Garmoth"]},
-  Friday:{"00:15":["Karanda","Kzarka","Sangoon"],"02:00":["Nouver","Bulgasal"],"05:00":["Karanda"],"09:00":["Kutum"],"12:00":["Karanda"],"14:00":["Garmoth"],"16:00":["Nouver","Uturi"],"19:00":["Kzarka","Golden Pig King"],"19:15":[],"22:15":["Kzarka","Kutum","Bulgasal","Uturi"],"23:15":["Garmoth"]},
-  Saturday:{"00:15":["Karanda","Golden Pig King","Sangoon"],"02:00":["Offin","Golden Pig King","Bulgasal"],"05:00":["Nouver"],"09:00":["Kutum"],"12:00":["Nouver"],"14:00":["Garmoth"],"16:00":["Uturi","Golden Pig King"],"19:00":["Karanda","Kzarka","Bulgasal","Sangoon"],"19:15":[],"22:15":[],"23:15":[]},
-  Sunday:{"00:15":["Nouver","Kutum","Golden Pig King","Uturi"],"02:00":["Kzarka","Sangoon","Bulgasal"],"05:00":["Kutum"],"09:00":["Nouver"],"12:00":["Kzarka"],"14:00":["Garmoth"],"16:00":["Vell"],"19:00":[],"19:15":["Garmoth"],"22:15":["Kzarka","Nouver","Golden Pig King","Sangoon"],"23:15":["Garmoth"]}
+  Monday:{"00:15":["Uturi","Kutum"],"02:00":["Sangoon","Karanda"],"12:00":["Sangoon","Nouver"],"14:00":["Garmoth"],"16:00":["Uturi","Kutum"],"19:00":["Golden Pig King","Nouver"],"19:15":[],"22:15":["Bulgasal","Kzarka"],"23:15":["Garmoth"]},
+  Tuesday:{"00:15":["Sangoon","Karanda"],"02:00":[],"12:00":["Bulgasal","Kutum"],"14:00":["Garmoth"],"16:00":["Golden Pig King","Nouver"],"19:00":["Uturi","Kzarka"],"19:15":[],"22:15":["Quint","Muraka"],"23:15":["Garmoth"]},
+  Wednesday:{"00:15":["Golden Pig King","Kzarka"],"02:00":[],"12:00":["Sangoon","Karanda"],"14:00":["Garmoth"],"16:00":["Bulgasal","Offin"],"19:00":["Vell"],"19:15":[],"22:15":["Uturi","Nouver"],"23:15":["Garmoth"]},
+  Thursday:{"00:15":["Uturi","Nouver"],"02:00":["Golden Pig King","Kzarka"],"12:00":[],"14:00":["Garmoth"],"16:00":["Sangoon","Karanda"],"19:00":["Bulgasal","Kutum"],"19:15":[],"22:15":["Quint","Muraka"],"23:15":["Garmoth"]},
+  Friday:{"00:15":["Golden Pig King","Karanda"],"02:00":["Bulgasal","Nouver"],"12:00":["Uturi","Kutum"],"14:00":["Garmoth"],"16:00":["Bulgasal","Kzarka"],"19:00":["Sangoon","Offin"],"19:15":[],"22:15":["Golden Pig King","Kutum"],"23:15":["Garmoth"]},
+  Saturday:{"00:15":["Bulgasal","Kzarka"],"02:00":["Uturi","Offin"],"12:00":["Golden Pig King","Nouver"],"14:00":["Garmoth"],"16:00":["Black Shadow"],"19:00":["Sangoon","Karanda"],"19:15":[],"22:15":[],"23:15":[]},
+  Sunday:{"00:15":["Bulgasal","Nouver"],"02:00":["Golden Pig King","Kutum"],"12:00":["Uturi","Kzarka"],"14:00":["Garmoth"],"16:00":["Vell"],"19:00":[],"19:15":["Garmoth"],"22:15":["Sangoon","Karanda"],"23:15":["Garmoth"]}
 };
 const HOME_BOSSES = ["Garmoth","Vell","Quint","Muraka","Kutum","Karanda","Kzarka","Nouver","Offin","Sangoon","Uturi","Golden Pig King","Bulgasal","Black Shadow"];
 const HOME_TIMER_CONFIG = {

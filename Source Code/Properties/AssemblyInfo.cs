@@ -7,13 +7,16 @@ using System.Runtime.Versioning;
 [assembly: AssemblyConfiguration("Release")]
 [assembly: AssemblyCopyright("Copyright Â© 2026")]
 [assembly: AssemblyDescription("Local Black Desert utility for trade calculations, read-only market analytics, portraits, and fonts.")]
-[assembly: AssemblyFileVersion("0.6.0.0")]
-[assembly: AssemblyInformationalVersion("v0.6")]
+[assembly: AssemblyFileVersion("0.7.0.0")]
+[assembly: AssemblyInformationalVersion("v0.7")]
 [assembly: AssemblyProduct("BDO Multi-Tool")]
 [assembly: AssemblyTitle("BDO Multi-Tool")]
 [assembly: TargetPlatform("Windows10.0.17763.0")]
 [assembly: SupportedOSPlatform("Windows10.0.17763.0")]
-[assembly: AssemblyVersion("0.6.0.0")]
+[assembly: AssemblyVersion("0.7.0.0")]
+
+
+
 
 
 

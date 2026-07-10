@@ -1,6 +1,6 @@
 ﻿{
-    "version":  "v0.6",
+    "version":  "v0.7",
     "releaseUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest",
     "downloadUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest/download/BDO-Multi-Tool-Installer.exe",
-    "notes":  "BDO Multi-Tool v0.6\n\n- Fixed Events loading when the official BDO site blocks background requests.\n- Added a hidden browser fallback so Events can parse the rendered official page.\n- Improved Events parsing for current official page markup and protected empty-cache behavior.\n- Keeps the last good Events cache instead of showing a blank tab when refresh fails."
+    "notes":  "BDO Multi-Tool v0.7\n\n- Moved the Events event detail panel to the right side of the calendar and removed the extra bottom event list section.\n- Made the Refresh Events button brighter and easier to see across themes.\n- Corrected the boss schedule timings and boss pairings to match the current reference schedule.\n- Kept the Events calendar/detail layout cleaner for the next polishing pass."
 }
