@@ -5143,6 +5143,9 @@ window.chrome?.webview?.addEventListener("message", event => {
   if(message.eventName === "dataChanged" && marketState.initialized) {
     refreshMarketState();
   }
+  if(message.eventName === "updateCheckRequested") {
+    initializeUpdateChecker();
+  }
 });
 
 function setMarketStatus(message, isError = false) {

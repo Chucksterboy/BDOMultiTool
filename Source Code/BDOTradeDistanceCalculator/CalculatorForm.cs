@@ -198,6 +198,7 @@ internal sealed class CalculatorForm : Form
 				WindowState = FormWindowState.Normal;
 			Activate();
 			ApplyTaskbarCouponBadge(couponBadgeCount);
+			PostEvent("updateCheckRequested", new { source = "trayRestore" });
 		}
 		catch (Exception ex)
 		{
