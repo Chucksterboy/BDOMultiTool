@@ -1,7 +1,7 @@
-using System;
+﻿using System;
 using System.IO;
 
-namespace BDOTradeDistanceCalculator;
+namespace BDOMultiTool;
 
 internal sealed class AppLogger : IDisposable
 {
@@ -48,3 +48,4 @@ internal sealed class AppLogger : IDisposable
 	{
 	}
 }
+

@@ -1,9 +1,9 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace BDOTradeDistanceCalculator;
+namespace BDOMultiTool;
 
 internal sealed record AppBehaviorSettings(bool MinimizeToTray)
 {
@@ -40,3 +40,4 @@ internal sealed record AppBehaviorSettings(bool MinimizeToTray)
 		return settings;
 	}
 }
+

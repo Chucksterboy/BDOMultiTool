@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
@@ -6,7 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace BDOTradeDistanceCalculator;
+namespace BDOMultiTool;
 
 internal sealed class UpdateCheckerService : IDisposable
 {
@@ -151,3 +151,4 @@ internal sealed record UpdateCheckResult(
 	string RepositoryUrl,
 	string Message,
 	bool CheckFailed);
+

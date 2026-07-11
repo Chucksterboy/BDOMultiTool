@@ -5,7 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace BDOTradeDistanceCalculator;
+namespace BDOMultiTool;
 
 internal sealed class MarketAnalyticsService : IDisposable
 {
@@ -25,7 +25,7 @@ internal sealed class MarketAnalyticsService : IDisposable
 
 	private readonly SemaphoreSlim outfitLock = new SemaphoreSlim(1, 1);
 
-	private readonly Semaphore processUpdateLock = new Semaphore(1, 1, "Local\\BDOTradeDistanceCalculator-MarketUpdate");
+	private readonly Semaphore processUpdateLock = new Semaphore(1, 1, "Local\\BDOMultiTool-MarketUpdate");
 
 	private readonly CancellationTokenSource shutdown = new CancellationTokenSource();
 

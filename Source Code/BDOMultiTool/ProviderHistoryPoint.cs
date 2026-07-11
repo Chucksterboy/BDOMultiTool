@@ -1,5 +1,6 @@
-using System;
+﻿using System;
 
-namespace BDOTradeDistanceCalculator;
+namespace BDOMultiTool;
 
 internal sealed record ProviderHistoryPoint(DateTimeOffset Timestamp, long Price);
+

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -9,7 +9,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace BDOTradeDistanceCalculator;
+namespace BDOMultiTool;
 
 internal sealed class CouponService : IDisposable
 {
@@ -432,3 +432,4 @@ internal sealed record CouponReward(string ItemName, int Quantity, string IconUr
 internal sealed record CouponEntry(string Code, DateTimeOffset? AddedUtc, string AddedText, DateTimeOffset? ExpiryUtc, string ExpiryText, bool IsExpired, List<CouponReward> Rewards, string Source);
 internal sealed record CouponCache(DateTimeOffset LastRefreshed, string Source, List<CouponEntry> Coupons, string? LastError);
 internal sealed record CouponRefreshDebug(string SourceUrl, int? HttpStatus, int RawResponseLength, int CouponsParsed, bool ParsingSucceeded, bool CacheUpdated, string? FailureReason);
+

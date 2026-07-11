@@ -1,9 +1,9 @@
-using System;
+﻿using System;
 using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
-namespace BDOTradeDistanceCalculator;
+namespace BDOMultiTool;
 
 internal static class WindowChrome
 {
@@ -49,3 +49,4 @@ internal static class WindowChrome
 	[DllImport("dwmapi.dll")]
 	private static extern int DwmSetWindowAttribute(nint hwnd, int attribute, ref int value, int valueSize);
 }
+

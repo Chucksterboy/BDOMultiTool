@@ -9,7 +9,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace BDOTradeDistanceCalculator;
+namespace BDOMultiTool;
 
 internal sealed class BlackDesertMarketProvider : IMarketDataProvider, IDisposable
 {
@@ -28,7 +28,7 @@ internal sealed class BlackDesertMarketProvider : IMarketDataProvider, IDisposab
 		{
 			Timeout = TimeSpan.FromSeconds(25.0)
 		};
-		client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("BDO-Trade-Distance-Calculator", "1.0"));
+		client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("BDO-Multi-Tool", "1.0"));
 		client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 	}
 

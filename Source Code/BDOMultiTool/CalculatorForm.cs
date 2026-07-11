@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -14,7 +14,7 @@ using System.Diagnostics;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
-namespace BDOTradeDistanceCalculator;
+namespace BDOMultiTool;
 
 internal sealed class CalculatorForm : Form
 {
@@ -1303,3 +1303,4 @@ internal sealed class CalculatorForm : Form
 		return string.Equals(Path.GetFullPath(result.LocalPath), Path.GetFullPath(paths.HtmlPath), StringComparison.OrdinalIgnoreCase);
 	}
 }
+

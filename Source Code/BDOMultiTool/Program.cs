@@ -12,11 +12,11 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Data.Sqlite;
 
-namespace BDOTradeDistanceCalculator;
+namespace BDOMultiTool;
 
 internal static class Program
 {
-	private const string ResourceName = "BDOTradeDistanceCalculator.Resources.BDO_Trade_Distance_Calculator.html";
+	private const string ResourceName = "BDOMultiTool.Resources.BDO_Multi_Tool.html";
 
 	private const string SingleInstanceMutexName = "Local\\BDOMultiTool.SingleInstance";
 
@@ -391,7 +391,7 @@ internal static class Program
 	private static void PrepareUiFiles(AppPaths paths)
 	{
 		string baseDirectory = AppContext.BaseDirectory;
-		string htmlSource = Path.Combine(baseDirectory, "BDOTradeDistanceCalculator.Resources.BDO_Trade_Distance_Calculator.html");
+		string htmlSource = Path.Combine(baseDirectory, "BDOMultiTool.Resources.BDO_Multi_Tool.html");
 		if (File.Exists(htmlSource))
 		{
 			CopyFileIfChanged(htmlSource, paths.HtmlPath);

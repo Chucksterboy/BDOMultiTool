@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Data.Common;
 using System.IO;
@@ -8,7 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
 
-namespace BDOTradeDistanceCalculator;
+namespace BDOMultiTool;
 
 internal sealed class MarketDatabase
 {
@@ -738,3 +738,4 @@ SELECT MAX(captured_utc) FROM (
 		return "\"" + value.Replace("\"", "\"\"") + "\"";
 	}
 }
+

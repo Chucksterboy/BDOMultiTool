@@ -1,6 +1,6 @@
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 
-namespace BDOTradeDistanceCalculator;
+namespace BDOMultiTool;
 
 internal sealed record MarketSettings(string Region, int IntervalMinutes)
 {
@@ -13,3 +13,4 @@ internal sealed record MarketSettings(string Region, int IntervalMinutes)
 		IntervalMinutes = original.IntervalMinutes;
 	}
 }
+

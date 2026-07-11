@@ -1,8 +1,8 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace BDOTradeDistanceCalculator;
+namespace BDOMultiTool;
 
 internal interface IMarketDataProvider
 {
@@ -16,3 +16,4 @@ internal interface IMarketDataProvider
 
 	Task<MarketSnapshot> GetSnapshotAsync(long itemId, int enhancement, string region, CancellationToken cancellationToken);
 }
+
