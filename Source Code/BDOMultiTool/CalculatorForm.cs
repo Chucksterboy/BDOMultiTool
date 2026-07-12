@@ -4,6 +4,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -730,6 +731,8 @@ internal sealed class CalculatorForm : Form
 			return await LoadEventsWithBrowserFallbackAsync(forceRefresh: true);
 		case "checkForUpdates":
 			return await updateCheckerService.CheckAsync(CancellationToken.None);
+		case "downloadAndInstallUpdate":
+			return await DownloadAndLaunchUpdateInstallerAsync(CancellationToken.None);
 		case "saveCouponSettings":
 		{
 			CouponSettings settings = JsonSerializer.Deserialize<CouponSettings>(payload.GetRawText(), JsonOptions)
@@ -1046,6 +1049,71 @@ internal sealed class CalculatorForm : Form
 			|| html.Contains("event_list", StringComparison.OrdinalIgnoreCase);
 	}
 
+	private async Task<object> DownloadAndLaunchUpdateInstallerAsync(CancellationToken cancellationToken)
+	{
+		UpdateCheckResult update = await updateCheckerService.CheckAsync(cancellationToken);
+		if (!update.UpdateAvailable)
+		{
+			return new
+			{
+				started = false,
+				latestVersion = update.LatestVersion,
+				message = "You are on the latest version."
+			};
+		}
+
+		if (!Uri.TryCreate(update.Url, UriKind.Absolute, out Uri? uri)
+			|| uri.Scheme != Uri.UriSchemeHttps
+			|| !IsAllowedUpdateDownloadHost(uri.Host))
+		{
+			throw new InvalidOperationException("The update download link is not allowed.");
+		}
+
+		if (!uri.AbsolutePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+		{
+			throw new InvalidOperationException("The latest release does not include a direct Windows installer download yet.");
+		}
+
+		string safeVersion = new string(update.LatestVersion.Where(ch => char.IsLetterOrDigit(ch) || ch is '.' or '-' or '_').ToArray());
+		if (string.IsNullOrWhiteSpace(safeVersion))
+			safeVersion = "latest";
+
+		string directory = Path.Combine(Path.GetTempPath(), "BDO-Multi-Tool-Updates");
+		Directory.CreateDirectory(directory);
+		string installerPath = Path.Combine(directory, $"BDO-Multi-Tool-Installer-{safeVersion}.exe");
+
+		using HttpClient client = new()
+		{
+			Timeout = TimeSpan.FromMinutes(2)
+		};
+		client.DefaultRequestHeaders.UserAgent.ParseAdd("BDO-Multi-Tool/" + AppVersion.Current);
+		using HttpResponseMessage response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+		response.EnsureSuccessStatusCode();
+
+		await using (Stream input = await response.Content.ReadAsStreamAsync(cancellationToken))
+		await using (FileStream output = new FileStream(installerPath, FileMode.Create, FileAccess.Write, FileShare.None))
+		{
+			await input.CopyToAsync(output, cancellationToken);
+		}
+
+		FileInfo downloaded = new FileInfo(installerPath);
+		if (!downloaded.Exists || downloaded.Length < 128 * 1024)
+			throw new InvalidOperationException("Downloaded installer was incomplete.");
+
+		Process.Start(new ProcessStartInfo(installerPath)
+		{
+			UseShellExecute = true
+		});
+		BeginInvoke(new Action(Close));
+
+		return new
+		{
+			started = true,
+			latestVersion = update.LatestVersion,
+			installerPath
+		};
+	}
+
 	private async Task<object> ExportCouponsAsync()
 	{
 		IReadOnlyList<CouponEntry> coupons = await couponService.GetCouponsAsync(CancellationToken.None);
@@ -1081,6 +1149,18 @@ internal sealed class CalculatorForm : Form
 			"github.com"
 		];
 		return allowedHosts.Any(x => x.Equals(host, StringComparison.OrdinalIgnoreCase));
+	}
+
+	private static bool IsAllowedUpdateDownloadHost(string host)
+	{
+		string[] allowedHosts =
+		[
+			"github.com",
+			"objects.githubusercontent.com",
+			"github-releases.githubusercontent.com"
+		];
+		return allowedHosts.Any(x => x.Equals(host, StringComparison.OrdinalIgnoreCase))
+			|| host.EndsWith(".github.com", StringComparison.OrdinalIgnoreCase);
 	}
 
 	[DllImport("user32.dll")]

@@ -1,6 +1,6 @@
 ﻿{
-    "version":  "v0.7.5",
+    "version":  "v0.8",
     "releaseUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest",
     "downloadUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest/download/BDO-Multi-Tool-Installer.exe",
-    "notes":  "BDO Multi-Tool v0.7.5\n\n- Renamed internal runtime/source identity from BDO Trade Distance Calculator to BDO Multi-Tool while preserving old user data through migration.\n- Removed stale coupon legacy UI and dead disabled lifeskill code.\n- Reduced idle timer work by using active-view refresh ticks.\n- Rebuilt the installer with the latest main app payload."
+    "notes":  "BDO Multi-Tool v0.8\n\n- Removed the redundant Interface style dropdown so the style preview cards are the single visible selector.\n- Kept the hidden settings value for compatibility with existing theme logic.\n- Included the latest in-app update installer download flow and current main-app polish."
 }
