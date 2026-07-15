@@ -14,6 +14,11 @@ using System.Windows.Forms;
 using System.Diagnostics;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
+using Windows.Globalization;
+using Windows.Graphics.Imaging;
+using Windows.Media.Ocr;
+using Windows.Storage;
+using Windows.Storage.Streams;
 
 namespace BDOMultiTool;
 
@@ -98,6 +103,8 @@ internal sealed class CalculatorForm : Form
 
 	private MarketAnalyticsService? marketService;
 
+	private readonly GrindMarketPriceProvider grindMarketPriceProvider;
+
 	private readonly NotifyIcon trayIcon;
 
 	private readonly Icon appIcon;
@@ -131,6 +138,7 @@ internal sealed class CalculatorForm : Form
 		couponService = new CouponService(paths, logger);
 		eventService = new EventService(paths, logger);
 		updateCheckerService = new UpdateCheckerService(logger);
+		grindMarketPriceProvider = new GrindMarketPriceProvider(logger);
 		Text = "BDO Multi-Tool";
 		appIcon = (Icon?)System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath)?.Clone() ?? SystemIcons.Application;
 		base.Icon = appIcon;
@@ -580,6 +588,7 @@ internal sealed class CalculatorForm : Form
 	{
 		try { SetCouponBadgeCount(0); } catch { }
 		try { marketService?.Dispose(); } catch { }
+		try { grindMarketPriceProvider.Dispose(); } catch { }
 		try { couponService.Dispose(); } catch { }
 		try { eventService.Dispose(); } catch { }
 		try { updateCheckerService.Dispose(); } catch { }
@@ -773,6 +782,10 @@ internal sealed class CalculatorForm : Form
 		case "playAlarmSound":
 			PlayAlarmSound();
 			return new { played = true };
+		case "selectGrindLootImage":
+			return await SelectGrindLootImageAsync(payload);
+		case "scanGrindLootImage":
+			return await ScanGrindLootImageAsync(payload);
 		case "speakText":
 		{
 			string text = payload.TryGetProperty("text", out JsonElement textValue)
@@ -780,6 +793,29 @@ internal sealed class CalculatorForm : Form
 				: string.Empty;
 			SpeakText(text);
 			return new { spoken = true };
+		}
+		case "getGrindMarketPrices":
+		{
+			string region = payload.TryGetProperty("region", out JsonElement regionValue)
+				? regionValue.GetString() ?? "eu"
+				: "eu";
+			List<long> itemIds = new();
+			if (payload.TryGetProperty("itemIds", out JsonElement itemValues) && itemValues.ValueKind == JsonValueKind.Array)
+			{
+				foreach (JsonElement itemValue in itemValues.EnumerateArray())
+				{
+					long numericId;
+					if (itemValue.ValueKind == JsonValueKind.Number && itemValue.TryGetInt64(out numericId))
+					{
+						itemIds.Add(numericId);
+					}
+					else if (itemValue.ValueKind == JsonValueKind.String && long.TryParse(itemValue.GetString(), out numericId))
+					{
+						itemIds.Add(numericId);
+					}
+				}
+			}
+			return await grindMarketPriceProvider.GetPricesAsync(itemIds, region, CancellationToken.None);
 		}
 		default:
 		{
@@ -1334,6 +1370,812 @@ internal sealed class CalculatorForm : Form
 		};
 	}
 
+	private async Task<object> SelectGrindLootImageAsync(JsonElement payload)
+	{
+		List<GrindScanDrop> drops = ReadGrindScanDrops(payload);
+		using OpenFileDialog dialog = new OpenFileDialog
+		{
+			Title = "Select loot screenshot",
+			Filter = "Supported images (*.png;*.jpg;*.jpeg;*.bmp)|*.png;*.jpg;*.jpeg;*.bmp|PNG images (*.png)|*.png|JPEG images (*.jpg;*.jpeg)|*.jpg;*.jpeg|Bitmap images (*.bmp)|*.bmp",
+			CheckFileExists = true,
+			Multiselect = false
+		};
+		if (dialog.ShowDialog(this) != DialogResult.OK)
+		{
+			return new { cancelled = true };
+		}
+
+		string fileName = Path.GetFileName(dialog.FileName);
+		return await BuildGrindLootImageScanResponseAsync(fileName, dialog.FileName, dialog.FileName, drops);
+	}
+
+	private async Task<object> ScanGrindLootImageAsync(JsonElement payload)
+	{
+		List<GrindScanDrop> drops = ReadGrindScanDrops(payload);
+		string fileName = payload.TryGetProperty("fileName", out JsonElement fileNameValue)
+			? fileNameValue.GetString() ?? "Loot screenshot"
+			: "Loot screenshot";
+		string dataUrl = payload.TryGetProperty("dataUrl", out JsonElement dataUrlValue)
+			? dataUrlValue.GetString() ?? string.Empty
+			: string.Empty;
+		if (string.IsNullOrWhiteSpace(dataUrl))
+		{
+			throw new InvalidOperationException("No image data was provided.");
+		}
+
+		byte[] bytes = DecodeDataUrl(dataUrl);
+		string extension = Path.GetExtension(fileName);
+		if (string.IsNullOrWhiteSpace(extension) || extension.Length > 8)
+		{
+			extension = ".png";
+		}
+		string tempPath = Path.Combine(Path.GetTempPath(), $"bdo-grind-loot-{Guid.NewGuid():N}{extension}");
+		await File.WriteAllBytesAsync(tempPath, bytes, CancellationToken.None);
+		try
+		{
+			return await BuildGrindLootImageScanResponseAsync(fileName, tempPath, null, drops);
+		}
+		finally
+		{
+			try { File.Delete(tempPath); } catch { }
+		}
+	}
+
+	private async Task<object> BuildGrindLootImageScanResponseAsync(string fileName, string imagePath, string? sourcePath, IReadOnlyList<GrindScanDrop> drops)
+	{
+		string dataUrl = await CreateImagePreviewDataUrlAsync(imagePath);
+		string screenshotText = await TryReadImageTextAsync(imagePath);
+		List<GrindLootImageMatch> matches = await ScanGrindLootImageForDropsAsync(imagePath, drops);
+		return new
+		{
+			cancelled = false,
+			fileName,
+			path = sourcePath ?? string.Empty,
+			dataUrl,
+			screenshotText,
+			screenshotTextAvailable = !string.IsNullOrWhiteSpace(screenshotText),
+			matches
+		};
+	}
+
+	private static byte[] DecodeDataUrl(string dataUrl)
+	{
+		int comma = dataUrl.IndexOf(',');
+		string payload = comma >= 0 ? dataUrl[(comma + 1)..] : dataUrl;
+		return Convert.FromBase64String(payload);
+	}
+
+	private List<GrindScanDrop> ReadGrindScanDrops(JsonElement payload)
+	{
+		List<GrindScanDrop> drops = new();
+		if (!payload.TryGetProperty("drops", out JsonElement dropValues) || dropValues.ValueKind != JsonValueKind.Array)
+		{
+			return drops;
+		}
+
+		foreach (JsonElement dropValue in dropValues.EnumerateArray())
+		{
+			string id = dropValue.TryGetProperty("id", out JsonElement idValue)
+				? idValue.ToString()
+				: string.Empty;
+			string name = dropValue.TryGetProperty("name", out JsonElement nameValue)
+				? nameValue.GetString() ?? string.Empty
+				: string.Empty;
+			string icon = dropValue.TryGetProperty("icon", out JsonElement iconValue)
+				? iconValue.GetString() ?? string.Empty
+				: string.Empty;
+			string iconPath = ResolveGrindIconPath(icon);
+			if (!string.IsNullOrWhiteSpace(id) && File.Exists(iconPath))
+			{
+				drops.Add(new GrindScanDrop(id, name, iconPath));
+			}
+		}
+		return drops;
+	}
+
+	private string ResolveGrindIconPath(string icon)
+	{
+		if (string.IsNullOrWhiteSpace(icon))
+		{
+			return string.Empty;
+		}
+		if (Path.IsPathFullyQualified(icon))
+		{
+			return icon;
+		}
+		return Path.Combine(paths.Root, icon.Replace('/', Path.DirectorySeparatorChar));
+	}
+
+	private static async Task<string> TryReadImageTextAsync(string imagePath)
+	{
+		try
+		{
+			OcrEngine? engine = OcrEngine.TryCreateFromUserProfileLanguages()
+				?? OcrEngine.TryCreateFromLanguage(new Language("en-US"));
+			if (engine is null)
+			{
+				return string.Empty;
+			}
+
+			StorageFile file = await StorageFile.GetFileFromPathAsync(imagePath);
+			using IRandomAccessStream stream = await file.OpenReadAsync();
+			BitmapDecoder decoder = await BitmapDecoder.CreateAsync(stream);
+			BitmapTransform transform = new BitmapTransform();
+			uint maxDimension = OcrEngine.MaxImageDimension;
+			if (decoder.PixelWidth > maxDimension || decoder.PixelHeight > maxDimension)
+			{
+				double scale = Math.Min((double)maxDimension / Math.Max(1, decoder.PixelWidth), (double)maxDimension / Math.Max(1, decoder.PixelHeight));
+				transform.ScaledWidth = Math.Max(1, (uint)Math.Round(decoder.PixelWidth * scale));
+				transform.ScaledHeight = Math.Max(1, (uint)Math.Round(decoder.PixelHeight * scale));
+			}
+
+			using SoftwareBitmap bitmap = await decoder.GetSoftwareBitmapAsync(
+				BitmapPixelFormat.Bgra8,
+				BitmapAlphaMode.Premultiplied,
+				transform,
+				ExifOrientationMode.IgnoreExifOrientation,
+				ColorManagementMode.DoNotColorManage);
+			OcrResult result = await engine.RecognizeAsync(bitmap);
+			return string.Join(Environment.NewLine, result.Lines.Select(line => line.Text));
+		}
+		catch
+		{
+			return string.Empty;
+		}
+	}
+
+	private static async Task<string> CreateImagePreviewDataUrlAsync(string imagePath)
+	{
+		using Bitmap source = await LoadBitmapAsync(imagePath);
+		const int maxWidth = 900;
+		const int maxHeight = 520;
+		double scale = Math.Min(1.0, Math.Min((double)maxWidth / Math.Max(1, source.Width), (double)maxHeight / Math.Max(1, source.Height)));
+		int width = Math.Max(1, (int)Math.Round(source.Width * scale));
+		int height = Math.Max(1, (int)Math.Round(source.Height * scale));
+		using Bitmap preview = new Bitmap(width, height);
+		using (Graphics graphics = Graphics.FromImage(preview))
+		{
+			graphics.Clear(Color.Transparent);
+			graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+			graphics.SmoothingMode = SmoothingMode.HighQuality;
+			graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+			graphics.DrawImage(source, new Rectangle(0, 0, width, height));
+		}
+		using MemoryStream stream = new MemoryStream();
+		preview.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
+		return "data:image/png;base64," + Convert.ToBase64String(stream.ToArray());
+	}
+
+	private static async Task<List<GrindLootImageMatch>> ScanGrindLootImageForDropsAsync(string imagePath, IReadOnlyList<GrindScanDrop> drops)
+	{
+		List<GrindLootImageMatch> matches = new();
+		if (drops.Count == 0)
+		{
+			return matches;
+		}
+
+		using Bitmap screenshot = await LoadBitmapAsync(imagePath);
+		List<LoadedGrindScanDrop> icons = new();
+		foreach (GrindScanDrop drop in drops)
+		{
+			try
+			{
+				Bitmap bitmap = await LoadBitmapAsync(drop.IconPath);
+				icons.Add(new LoadedGrindScanDrop(drop, bitmap));
+			}
+			catch
+			{
+			}
+		}
+
+		try
+		{
+			Dictionary<string, GrindLootImageMatch> byId = new(StringComparer.OrdinalIgnoreCase);
+			foreach (Rectangle candidate in FindInventoryIconCandidates(screenshot))
+			{
+				using Bitmap crop = screenshot.Clone(candidate, screenshot.PixelFormat);
+				GrindIconMatch match = FindBestGrindDropMatch(crop, icons);
+				if (!IsConfidentGrindDropMatch(match))
+				{
+					continue;
+				}
+				LoadedGrindScanDrop drop = match.Drop!;
+
+				int count = ReadInventoryStackCount(crop);
+				if (count <= 0)
+				{
+					count = 1;
+				}
+
+				if (byId.TryGetValue(drop.Drop.Id, out GrindLootImageMatch existing))
+				{
+					byId[drop.Drop.Id] = existing with
+					{
+						Count = existing.Count + count,
+						Score = Math.Max(existing.Score, match.Score.Composite)
+					};
+				}
+				else
+				{
+					byId[drop.Drop.Id] = new GrindLootImageMatch(drop.Drop.Id, drop.Drop.Name, count, Math.Round(match.Score.Composite, 4));
+				}
+			}
+			matches.AddRange(byId.Values.OrderBy(match => match.Name, StringComparer.OrdinalIgnoreCase));
+			return matches;
+		}
+		finally
+		{
+			foreach (LoadedGrindScanDrop icon in icons)
+			{
+				icon.Bitmap.Dispose();
+			}
+		}
+	}
+
+	private static GrindIconMatch FindBestGrindDropMatch(Bitmap candidate, IReadOnlyList<LoadedGrindScanDrop> icons)
+	{
+		LoadedGrindScanDrop? best = null;
+		LoadedGrindScanDrop? runnerUpDrop = null;
+		GrindIconScore bestScore = GrindIconScore.Empty;
+		GrindIconScore runnerUp = GrindIconScore.Empty;
+		foreach (LoadedGrindScanDrop icon in icons)
+		{
+			GrindIconScore score = ScoreIconMatch(candidate, icon.Bitmap);
+			if (score.Composite > bestScore.Composite)
+			{
+				runnerUpDrop = best;
+				runnerUp = bestScore;
+				bestScore = score;
+				best = icon;
+			}
+			else if (score.Composite > runnerUp.Composite)
+			{
+				runnerUpDrop = icon;
+				runnerUp = score;
+			}
+		}
+		if (best is not null
+			&& runnerUpDrop is not null
+			&& string.Equals(best.Drop.Name, "Black Stone", StringComparison.OrdinalIgnoreCase)
+			&& !string.Equals(runnerUpDrop.Drop.Name, "Black Stone", StringComparison.OrdinalIgnoreCase)
+			&& runnerUp.Composite > 0.79
+			&& bestScore.Composite - runnerUp.Composite < 0.025)
+		{
+			return new GrindIconMatch(runnerUpDrop, runnerUp, bestScore);
+		}
+		return new GrindIconMatch(best, bestScore, runnerUp);
+	}
+
+	private static bool IsConfidentGrindDropMatch(GrindIconMatch match)
+	{
+		if (match.Drop is null)
+		{
+			return false;
+		}
+
+		GrindIconScore score = match.Score;
+		double lead = score.Composite - match.RunnerUp.Composite;
+		if (score.Rgb < 0.80 || score.Composite < 0.80)
+		{
+			return false;
+		}
+		if (score.Hue < 0.50 && score.Rgb < 0.88)
+		{
+			return false;
+		}
+		if (score.Edge < 0.68 && score.Rgb < 0.88)
+		{
+			return false;
+		}
+		if (score.Shape < 0.40 && score.Rgb < 0.88)
+		{
+			return false;
+		}
+		return score.Composite >= 0.84 || lead >= 0.03;
+	}
+
+	private static GrindIconScore ScoreIconMatch(Bitmap candidate, Bitmap icon)
+	{
+		GrindIconScore best = GrindIconScore.Empty;
+		for (int inset = 0; inset <= 6; inset += 2)
+		{
+			using Bitmap cropped = CropCenteredSquare(candidate, inset);
+			GrindIconScore score = ScoreIconMatchAtSize(cropped, icon);
+			if (score.Composite > best.Composite)
+			{
+				best = score;
+			}
+		}
+		return best;
+	}
+
+	private static GrindIconScore ScoreIconMatchAtSize(Bitmap candidate, Bitmap icon)
+	{
+		using Bitmap a = ResizeBitmap(candidate, 40);
+		using Bitmap b = ResizeBitmap(icon, 40);
+		double diff = 0;
+		double weight = 0;
+		double edgeDiff = 0;
+		double edgeWeight = 0;
+		double shapeIntersection = 0;
+		double shapeUnion = 0;
+		double[] candidateHue = new double[18];
+		double[] iconHue = new double[18];
+		for (int y = 0; y < 40; y++)
+		{
+			for (int x = 0; x < 40; x++)
+			{
+				Color ca = a.GetPixel(x, y);
+				Color cb = b.GetPixel(x, y);
+				if (x > 23 && y > 23 && IsWhiteCountPixel(ca))
+				{
+					continue;
+				}
+				double brightnessA = (ca.R + ca.G + ca.B) / 3.0;
+				double brightnessB = (cb.R + cb.G + cb.B) / 3.0;
+				if (brightnessA < 8 && brightnessB < 8)
+				{
+					continue;
+				}
+
+				double saturationA = Math.Max(ca.R, Math.Max(ca.G, ca.B)) - Math.Min(ca.R, Math.Min(ca.G, ca.B));
+				double saturationB = Math.Max(cb.R, Math.Max(cb.G, cb.B)) - Math.Min(cb.R, Math.Min(cb.G, cb.B));
+				double localWeight = 1 + ((saturationA + saturationB) / 160.0);
+				if (x < 7 || y < 7 || x > 34 || y > 34)
+				{
+					localWeight *= 0.55;
+				}
+				diff += localWeight * (Math.Abs(ca.R - cb.R) + Math.Abs(ca.G - cb.G) + Math.Abs(ca.B - cb.B)) / (3.0 * 255.0);
+				weight += localWeight;
+
+				bool candidateShape = brightnessA > 26 || saturationA > 22;
+				bool iconShape = brightnessB > 26 || saturationB > 22;
+				if (candidateShape || iconShape)
+				{
+					shapeUnion++;
+					if (candidateShape && iconShape)
+					{
+						shapeIntersection++;
+					}
+				}
+				if (brightnessA > 28 && saturationA > 30)
+				{
+					candidateHue[Math.Clamp((int)(ca.GetHue() / 20), 0, candidateHue.Length - 1)] += localWeight;
+				}
+				if (brightnessB > 28 && saturationB > 30)
+				{
+					iconHue[Math.Clamp((int)(cb.GetHue() / 20), 0, iconHue.Length - 1)] += localWeight;
+				}
+			}
+		}
+
+		for (int y = 1; y < 39; y++)
+		{
+			for (int x = 1; x < 39; x++)
+			{
+				double candidateEdge = EdgeStrength(a, x, y);
+				double iconEdge = EdgeStrength(b, x, y);
+				if (candidateEdge < 10 && iconEdge < 10)
+				{
+					continue;
+				}
+				double localWeight = 1 + Math.Min(2, (candidateEdge + iconEdge) / 130.0);
+				edgeDiff += localWeight * Math.Abs(candidateEdge - iconEdge) / 255.0;
+				edgeWeight += localWeight;
+			}
+		}
+
+		double rgb = weight <= 0 ? 0 : 1 - (diff / weight);
+		double hue = HistogramIntersection(candidateHue, iconHue);
+		double edge = edgeWeight <= 0 ? 0 : 1 - (edgeDiff / edgeWeight);
+		double shape = shapeUnion <= 0 ? 0 : shapeIntersection / shapeUnion;
+		double composite = (rgb * 0.58) + (hue * 0.18) + (edge * 0.16) + (shape * 0.08);
+		return new GrindIconScore(rgb, hue, edge, shape, composite);
+	}
+
+	private static double HistogramIntersection(double[] left, double[] right)
+	{
+		double leftTotal = left.Sum();
+		double rightTotal = right.Sum();
+		if (leftTotal <= 0 || rightTotal <= 0)
+		{
+			return 0;
+		}
+
+		double overlap = 0;
+		for (int index = 0; index < left.Length && index < right.Length; index++)
+		{
+			overlap += Math.Min(left[index] / leftTotal, right[index] / rightTotal);
+		}
+		return overlap;
+	}
+
+	private static double EdgeStrength(Bitmap bitmap, int x, int y)
+	{
+		double gx = PixelBrightness(bitmap.GetPixel(x + 1, y)) - PixelBrightness(bitmap.GetPixel(x - 1, y));
+		double gy = PixelBrightness(bitmap.GetPixel(x, y + 1)) - PixelBrightness(bitmap.GetPixel(x, y - 1));
+		return Math.Min(255, Math.Sqrt((gx * gx) + (gy * gy)));
+	}
+
+	private static double PixelBrightness(Color color)
+	{
+		return (color.R + color.G + color.B) / 3.0;
+	}
+
+	private static List<Rectangle> FindInventoryIconCandidates(Bitmap image)
+	{
+		int width = image.Width;
+		int height = image.Height;
+		bool[,] mask = new bool[width, height];
+		for (int y = 0; y < height; y++)
+		{
+			for (int x = 0; x < width; x++)
+			{
+				if (!IsInventoryForegroundPixel(image.GetPixel(x, y)))
+				{
+					continue;
+				}
+				for (int yy = Math.Max(0, y - 3); yy <= Math.Min(height - 1, y + 3); yy++)
+				{
+					for (int xx = Math.Max(0, x - 3); xx <= Math.Min(width - 1, x + 3); xx++)
+					{
+						mask[xx, yy] = true;
+					}
+				}
+			}
+		}
+
+		bool[,] seen = new bool[width, height];
+		List<Rectangle> candidates = new();
+		int[] dx = { -1, 0, 1, -1, 1, -1, 0, 1 };
+		int[] dy = { -1, -1, -1, 0, 0, 1, 1, 1 };
+		for (int y = 0; y < height; y++)
+		{
+			for (int x = 0; x < width; x++)
+			{
+				if (!mask[x, y] || seen[x, y])
+				{
+					continue;
+				}
+
+				Queue<Point> queue = new();
+				queue.Enqueue(new Point(x, y));
+				seen[x, y] = true;
+				int minX = x;
+				int maxX = x;
+				int minY = y;
+				int maxY = y;
+				int count = 0;
+				while (queue.Count > 0)
+				{
+					Point point = queue.Dequeue();
+					count++;
+					minX = Math.Min(minX, point.X);
+					maxX = Math.Max(maxX, point.X);
+					minY = Math.Min(minY, point.Y);
+					maxY = Math.Max(maxY, point.Y);
+					for (int index = 0; index < dx.Length; index++)
+					{
+						int nextX = point.X + dx[index];
+						int nextY = point.Y + dy[index];
+						if (nextX >= 0 && nextY >= 0 && nextX < width && nextY < height && mask[nextX, nextY] && !seen[nextX, nextY])
+						{
+							seen[nextX, nextY] = true;
+							queue.Enqueue(new Point(nextX, nextY));
+						}
+					}
+				}
+
+				Rectangle bounds = Rectangle.FromLTRB(minX, minY, maxX + 1, maxY + 1);
+				if (count > 50 && bounds.Width >= 12 && bounds.Height >= 12 && bounds.Width <= 80 && bounds.Height <= 80)
+				{
+					candidates.Add(bounds);
+				}
+			}
+		}
+		return candidates;
+	}
+
+	private static int ReadInventoryStackCount(Bitmap crop)
+	{
+		List<DigitComponent> components = FindCountDigitComponents(crop);
+		if (components.Count == 0)
+		{
+			return 1;
+		}
+
+		string text = string.Concat(components.Select(component => GuessInventoryDigit(component.Mask)));
+		if (text.Length == 0 || text.Any(ch => !char.IsDigit(ch)))
+		{
+			return 1;
+		}
+		return int.TryParse(text, out int parsed) ? Math.Max(1, parsed) : 1;
+	}
+
+	private static List<DigitComponent> FindCountDigitComponents(Bitmap crop)
+	{
+		List<DigitComponent> raw = FindRawDigitComponents(crop);
+		if (raw.Count == 0)
+		{
+			return raw;
+		}
+
+		DigitComponent rightmost = raw.OrderByDescending(component => component.Bounds.Right).First();
+		if (rightmost.Bounds.Right < crop.Width - 8)
+		{
+			return new List<DigitComponent>();
+		}
+
+		List<DigitComponent> cluster = new() { rightmost };
+		int left = rightmost.Bounds.Left;
+		while (true)
+		{
+			DigitComponent? next = raw
+				.Where(component => component.Bounds.Right <= left
+					&& left - component.Bounds.Right <= 4
+					&& Math.Abs(component.Bounds.Bottom - rightmost.Bounds.Bottom) <= 2
+					&& Math.Abs(component.Bounds.Top - rightmost.Bounds.Top) <= 6)
+				.OrderByDescending(component => component.Bounds.Right)
+				.FirstOrDefault();
+			if (next is null)
+			{
+				break;
+			}
+			cluster.Add(next);
+			left = next.Bounds.Left;
+		}
+		return cluster.OrderBy(component => component.Bounds.Left).ToList();
+	}
+
+	private static List<DigitComponent> FindRawDigitComponents(Bitmap crop)
+	{
+		int width = crop.Width;
+		int height = crop.Height;
+		bool[,] mask = new bool[width, height];
+		for (int y = 22; y < Math.Min(height, 42); y++)
+		{
+			for (int x = 8; x < width; x++)
+			{
+				if (IsWhiteCountPixel(crop.GetPixel(x, y)))
+				{
+					mask[x, y] = true;
+				}
+			}
+		}
+
+		bool[,] seen = new bool[width, height];
+		List<DigitComponent> components = new();
+		int[] dx = { -1, 0, 1, -1, 1, -1, 0, 1 };
+		int[] dy = { -1, -1, -1, 0, 0, 1, 1, 1 };
+		for (int y = 0; y < height; y++)
+		{
+			for (int x = 0; x < width; x++)
+			{
+				if (!mask[x, y] || seen[x, y])
+				{
+					continue;
+				}
+
+				Queue<Point> queue = new();
+				List<Point> points = new();
+				queue.Enqueue(new Point(x, y));
+				seen[x, y] = true;
+				int minX = x;
+				int maxX = x;
+				int minY = y;
+				int maxY = y;
+				while (queue.Count > 0)
+				{
+					Point point = queue.Dequeue();
+					points.Add(point);
+					minX = Math.Min(minX, point.X);
+					maxX = Math.Max(maxX, point.X);
+					minY = Math.Min(minY, point.Y);
+					maxY = Math.Max(maxY, point.Y);
+					for (int index = 0; index < dx.Length; index++)
+					{
+						int nextX = point.X + dx[index];
+						int nextY = point.Y + dy[index];
+						if (nextX >= 0 && nextY >= 0 && nextX < width && nextY < height && mask[nextX, nextY] && !seen[nextX, nextY])
+						{
+							seen[nextX, nextY] = true;
+							queue.Enqueue(new Point(nextX, nextY));
+						}
+					}
+				}
+
+				Rectangle bounds = Rectangle.FromLTRB(minX, minY, maxX + 1, maxY + 1);
+				if (points.Count < 3 || bounds.Height < 5 || bounds.Width < 1 || bounds.Width > 10)
+				{
+					continue;
+				}
+
+				bool[,] componentMask = new bool[bounds.Width, bounds.Height];
+				foreach (Point point in points)
+				{
+					componentMask[point.X - bounds.X, point.Y - bounds.Y] = true;
+				}
+				components.Add(new DigitComponent(bounds, componentMask));
+			}
+		}
+		return components.OrderBy(component => component.Bounds.Left).ToList();
+	}
+
+	private static char GuessInventoryDigit(bool[,] mask)
+	{
+		int width = mask.GetLength(0);
+		int height = mask.GetLength(1);
+		double top = Occupancy(mask, 1, 0, width - 1, 2);
+		double middle = Occupancy(mask, 1, (height / 2) - 1, width - 1, (height / 2) + 2);
+		double bottom = Occupancy(mask, 1, height - 2, width - 1, height);
+		double upperLeft = Occupancy(mask, 0, 1, 2, height / 2);
+		double upperRight = Occupancy(mask, width - 2, 1, width, height / 2);
+		double lowerLeft = Occupancy(mask, 0, height / 2, 2, height - 1);
+		double lowerRight = Occupancy(mask, width - 2, height / 2, width, height - 1);
+		double center = Occupancy(mask, width / 3, height / 3, Math.Max((width / 3) + 1, (2 * width) / 3), Math.Max((height / 3) + 1, (2 * height) / 3));
+		bool t = top > 0.28;
+		bool m = middle > 0.20;
+		bool b = bottom > 0.28;
+		bool ul = upperLeft > 0.18;
+		bool ur = upperRight > 0.18;
+		bool ll = lowerLeft > 0.18;
+		bool lr = lowerRight > 0.18;
+
+		if (width <= 3 || (width <= 5 && center > 0.3 && upperLeft < 0.15 && upperRight < 0.35 && lowerLeft < 0.15 && lowerRight < 0.35))
+		{
+			return '1';
+		}
+		if (t && b && ul && ur && ll && lr && !m)
+		{
+			return '0';
+		}
+		if (t && m && b && ul && ll && upperRight < 0.40)
+		{
+			return '6';
+		}
+		if (t && m && b && ul && ur && lr && !ll)
+		{
+			return '9';
+		}
+		if (t && m && b && ur && lr && !ul && !ll)
+		{
+			return '3';
+		}
+		if (t && m && b && ul && lr && !ur && !ll)
+		{
+			return '5';
+		}
+		if (t && m && b && ur && ll && !ul && !lr)
+		{
+			return '2';
+		}
+		if (t && ur && !ul && !ll && lowerRight < 0.25)
+		{
+			return '7';
+		}
+		if (m && ul && ur && lr && !ll && !t && !b)
+		{
+			return '4';
+		}
+		if (t && m && b && ul && ur && ll && lr)
+		{
+			return '8';
+		}
+		return '?';
+	}
+
+	private static double Occupancy(bool[,] mask, int x1, int y1, int x2, int y2)
+	{
+		int width = mask.GetLength(0);
+		int height = mask.GetLength(1);
+		x1 = Math.Clamp(x1, 0, width);
+		x2 = Math.Clamp(x2, 0, width);
+		y1 = Math.Clamp(y1, 0, height);
+		y2 = Math.Clamp(y2, 0, height);
+		int total = 0;
+		int filled = 0;
+		for (int y = y1; y < y2; y++)
+		{
+			for (int x = x1; x < x2; x++)
+			{
+				total++;
+				if (mask[x, y])
+				{
+					filled++;
+				}
+			}
+		}
+		return total == 0 ? 0 : (double)filled / total;
+	}
+
+	private static bool IsInventoryForegroundPixel(Color color)
+	{
+		int max = Math.Max(color.R, Math.Max(color.G, color.B));
+		int min = Math.Min(color.R, Math.Min(color.G, color.B));
+		double brightness = (color.R + color.G + color.B) / 3.0;
+		return (max - min > 35 && brightness > 35) || (brightness > 105 && max - min < 95);
+	}
+
+	private static bool IsWhiteCountPixel(Color color)
+	{
+		int max = Math.Max(color.R, Math.Max(color.G, color.B));
+		int min = Math.Min(color.R, Math.Min(color.G, color.B));
+		double brightness = (color.R + color.G + color.B) / 3.0;
+		return brightness > 115 && max - min < 75;
+	}
+
+	private static Bitmap CropCenteredSquare(Bitmap source, int inset)
+	{
+		int size = Math.Max(1, Math.Min(source.Width, source.Height) - (2 * inset));
+		int x = Math.Max(0, (source.Width - size) / 2);
+		int y = Math.Max(0, (source.Height - size) / 2);
+		Bitmap bitmap = new Bitmap(size, size);
+		using Graphics graphics = Graphics.FromImage(bitmap);
+		graphics.Clear(Color.Black);
+		graphics.DrawImage(source, new Rectangle(0, 0, size, size), new Rectangle(x, y, size, size), GraphicsUnit.Pixel);
+		return bitmap;
+	}
+
+	private static Bitmap ResizeBitmap(Bitmap source, int size)
+	{
+		Bitmap bitmap = new Bitmap(size, size);
+		using Graphics graphics = Graphics.FromImage(bitmap);
+		graphics.Clear(Color.Black);
+		graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+		graphics.SmoothingMode = SmoothingMode.HighQuality;
+		graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+		graphics.DrawImage(source, new Rectangle(0, 0, size, size));
+		return bitmap;
+	}
+
+	private static async Task<Bitmap> LoadBitmapAsync(string imagePath)
+	{
+		try
+		{
+			using Image image = Image.FromFile(imagePath);
+			return new Bitmap(image);
+		}
+		catch
+		{
+			StorageFile file = await StorageFile.GetFileFromPathAsync(imagePath);
+			using IRandomAccessStream stream = await file.OpenReadAsync();
+			BitmapDecoder decoder = await BitmapDecoder.CreateAsync(stream);
+			PixelDataProvider pixels = await decoder.GetPixelDataAsync(
+				BitmapPixelFormat.Bgra8,
+				BitmapAlphaMode.Premultiplied,
+				new BitmapTransform(),
+				ExifOrientationMode.IgnoreExifOrientation,
+				ColorManagementMode.DoNotColorManage);
+			byte[] bytes = pixels.DetachPixelData();
+			Bitmap bitmap = new Bitmap((int)decoder.PixelWidth, (int)decoder.PixelHeight, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+			System.Drawing.Imaging.BitmapData data = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height), System.Drawing.Imaging.ImageLockMode.WriteOnly, bitmap.PixelFormat);
+			try
+			{
+				Marshal.Copy(bytes, 0, data.Scan0, bytes.Length);
+			}
+			finally
+			{
+				bitmap.UnlockBits(data);
+			}
+			return bitmap;
+		}
+	}
+
+	private sealed record GrindScanDrop(string Id, string Name, string IconPath);
+
+	private sealed record LoadedGrindScanDrop(GrindScanDrop Drop, Bitmap Bitmap);
+
+	private sealed record GrindIconMatch(LoadedGrindScanDrop? Drop, GrindIconScore Score, GrindIconScore RunnerUp);
+
+	private readonly record struct GrindIconScore(double Rgb, double Hue, double Edge, double Shape, double Composite)
+	{
+		public static GrindIconScore Empty { get; } = new(0, 0, 0, 0, 0);
+	}
+
+	private sealed record GrindLootImageMatch(string Id, string Name, int Count, double Score);
+
+	private sealed record DigitComponent(Rectangle Bounds, bool[,] Mask);
+
 	private void PostResponse(string? id, bool ok, object? data, string? error)
 	{
 		PostJson(new { id, ok, data, error });
@@ -1380,7 +2222,16 @@ internal sealed class CalculatorForm : Form
 		{
 			return false;
 		}
-		return string.Equals(Path.GetFullPath(result.LocalPath), Path.GetFullPath(paths.HtmlPath), StringComparison.OrdinalIgnoreCase);
+		string localPath = Path.GetFullPath(result.LocalPath);
+		string htmlPath = Path.GetFullPath(paths.HtmlPath);
+		if (string.Equals(localPath, htmlPath, StringComparison.OrdinalIgnoreCase))
+		{
+			return true;
+		}
+
+		string appRoot = Path.GetFullPath(paths.Root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+		return localPath.StartsWith(appRoot, StringComparison.OrdinalIgnoreCase);
 	}
 }
+
 
