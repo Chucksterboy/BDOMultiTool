@@ -1,6 +1,6 @@
 ﻿{
-    "version":  "v0.9.5",
+    "version":  "v0.9.6",
     "releaseUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest",
     "downloadUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest/download/BDO-Multi-Tool-Installer.exe",
-    "notes":  "BDO Multi-Tool v0.9.5\n\n- Audited grind-zone non-market and vendor/sell prices against BDO Codex and BDOLytics.\n- Corrected fixed pricing for Hoof of Forest Ronaros and vendor-only grind drops.\n- Moved Trace of Nature and missing custom drops like Sycraia Shard/imperfect lightstones onto market-backed pricing.\n- Added no-value handling for drops that have no Central Market or sell price so they no longer stay pending."
+    "notes":  "Cleanup unused bundled assets, reduce package size, and sharpen grind spot picker icons."
 }
