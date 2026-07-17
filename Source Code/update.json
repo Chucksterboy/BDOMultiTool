@@ -1,6 +1,6 @@
 ﻿{
-    "version":  "v0.9",
+    "version":  "v0.9.1",
     "releaseUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest",
     "downloadUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest/download/BDO-Multi-Tool-Installer.exe",
-    "notes":  "BDO Multi-Tool v0.9\n\n- Added the Grind Tracker session workflow with per-spot totals, average silver per hour, trash per hour, class display, Agris, and session modifiers.\n- Added EU grind item price caching and Arsha market-price support for grind drop values.\n- Improved grind-zone item/icon presentation, class icons, saved-session tables, and modifier icon alignment.\n- Added global loot screenshot scanning improvements for inventory screenshots and stricter item matching.\n- Hid the experimental Garmoth import entry point until it is ready for regular use."
+    "notes":  "BDO Multi-Tool v0.9.1\n\n- Replaced remaining circular/placeholder grind item icons with cleaner source-backed BDO Codex/BDOLytics icons.\n- Applied the icon cleanup globally across grind zones, zone selectors, and saved-session/item views.\n- Preserved existing polished icons and avoided the prior aggressive crop-based icon pass."
 }
