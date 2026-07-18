@@ -87,20 +87,47 @@ internal sealed class EventService : IDisposable
 
 		if (enrichDetails)
 		{
-			foreach (EventEntry entry in events.Take(18).ToArray())
+			using SemaphoreSlim concurrency = new(4, 4);
+			Task<(EventEntry Entry, bool Success)>[] enrichmentTasks = events.Take(18).Select(async entry =>
 			{
-				cancellationToken.ThrowIfCancellationRequested();
+				await concurrency.WaitAsync(cancellationToken);
 				try
 				{
-					EventEntry enriched = await EnrichAsync(entry, cancellationToken);
-					int index = events.FindIndex(x => x.Id == entry.Id);
-					if (index >= 0)
-						events[index] = enriched;
+					using CancellationTokenSource detailTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+					detailTimeout.CancelAfter(TimeSpan.FromSeconds(12));
+					return (await EnrichAsync(entry, detailTimeout.Token), true);
 				}
-				catch (Exception ex)
+				catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 				{
-					logger.Warn($"Event detail could not be read for {entry.Id}: {ex.Message}");
+					throw;
 				}
+				catch
+				{
+					return (entry, false);
+				}
+				finally
+				{
+					concurrency.Release();
+				}
+			}).ToArray();
+
+			(EventEntry Entry, bool Success)[] enrichmentResults = await Task.WhenAll(enrichmentTasks);
+			foreach ((EventEntry entry, bool success) in enrichmentResults)
+			{
+				if (!success)
+				{
+					continue;
+				}
+				int index = events.FindIndex(x => x.Id == entry.Id);
+				if (index >= 0)
+				{
+					events[index] = entry;
+				}
+			}
+			int failedDetails = enrichmentResults.Count(result => !result.Success);
+			if (failedDetails > 0)
+			{
+				logger.Warn($"Event refresh used list data for {failedDetails} detail page(s) that did not respond within the refresh budget.");
 			}
 		}
 

@@ -111,6 +111,7 @@ $installerOut = Join-Path $artifactRoot "Installer"
 $installerExe = Join-Path $installerOut "BDO Multi-Tool Installer.exe"
 $installerReleaseAsset = Join-Path $installerOut "BDO-Multi-Tool-Installer.exe"
 $installerAssetName = Split-Path $installerReleaseAsset -Leaf
+$verifyScript = Join-Path $repoRoot "scripts\verify.ps1"
 
 $dotnet = Resolve-DotnetSdkPath $repoRoot
 $git = Resolve-ToolPath "git" @("$env:LOCALAPPDATA\GitHubDesktop\app-*\resources\app\git\cmd\git.exe")
@@ -133,6 +134,11 @@ $manifest = [ordered]@{
 }
 $manifest | ConvertTo-Json | Set-Content -LiteralPath $updateManifestFile -Encoding UTF8
 Copy-Item -LiteralPath $updateManifestFile -Destination (Join-Path $sourceRoot "update.json") -Force
+
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $verifyScript
+if ($LASTEXITCODE -ne 0) {
+	throw "Pre-release verification failed."
+}
 
 if (Test-Path -LiteralPath $artifactRoot) {
 	Remove-Item -LiteralPath $artifactRoot -Recurse -Force

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
@@ -24,6 +25,7 @@ namespace BDOMultiTool;
 
 internal sealed class CalculatorForm : Form
 {
+	private const string LocalAppHost = "app.bdo.local";
 	[ComImport]
 	[Guid("56FDF344-FD6D-11d0-958A-006097C9A090")]
 	private sealed class CTaskbarList
@@ -108,6 +110,10 @@ internal sealed class CalculatorForm : Form
 	private readonly NotifyIcon trayIcon;
 
 	private readonly Icon appIcon;
+
+	private readonly CancellationTokenSource lifetimeCancellation = new();
+
+	private readonly ConcurrentDictionary<string, CancellationTokenSource> activeBridgeRequests = new(StringComparer.Ordinal);
 
 	private bool minimizeToTray = AppBehaviorSettings.Default.MinimizeToTray;
 
@@ -581,6 +587,7 @@ internal sealed class CalculatorForm : Form
 			MinimizeToSystemTray();
 			return;
 		}
+		lifetimeCancellation.Cancel();
 		base.OnFormClosing(e);
 	}
 
@@ -599,6 +606,7 @@ internal sealed class CalculatorForm : Form
 		try { appIcon.Dispose(); } catch { }
 		try { eventsBrowserView?.Dispose(); } catch { }
 		try { webView.Dispose(); } catch { }
+		try { lifetimeCancellation.Dispose(); } catch { }
 		base.OnFormClosed(e);
 	}
 
@@ -607,11 +615,12 @@ internal sealed class CalculatorForm : Form
 		_ = 2;
 		try
 		{
+			CancellationToken cancellationToken = lifetimeCancellation.Token;
 			MarketDatabase database = new MarketDatabase(paths.DatabasePath);
-			minimizeToTray = (await AppBehaviorSettings.LoadAsync(paths, CancellationToken.None)).MinimizeToTray;
+			minimizeToTray = (await AppBehaviorSettings.LoadAsync(paths, cancellationToken)).MinimizeToTray;
 			BlackDesertMarketProvider provider = new BlackDesertMarketProvider(logger);
 			marketService = new MarketAnalyticsService(database, provider, logger);
-			await marketService.InitializeAsync(CancellationToken.None);
+			await marketService.InitializeAsync(cancellationToken);
 			marketService.DataChanged += delegate
 			{
 				PostEvent("dataChanged", null);
@@ -622,6 +631,7 @@ internal sealed class CalculatorForm : Form
 			};
 			CoreWebView2Environment environment = await CoreWebView2Environment.CreateAsync(null, paths.WebViewDataPath);
 			await webView.EnsureCoreWebView2Async(environment);
+			webView.CoreWebView2.SetVirtualHostNameToFolderMapping(LocalAppHost, paths.Root, CoreWebView2HostResourceAccessKind.DenyCors);
 			webView.CoreWebView2.Settings.AreDevToolsEnabled = false;
 			webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
 			webView.CoreWebView2.Settings.IsStatusBarEnabled = false;
@@ -649,7 +659,28 @@ internal sealed class CalculatorForm : Form
 					Text = documentTitle;
 				}
 			};
-			webView.CoreWebView2.Navigate(new Uri(paths.HtmlPath).AbsoluteUri);
+			TaskCompletionSource<bool> navigationReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
+			void NavigationCompleted(object? _, CoreWebView2NavigationCompletedEventArgs args)
+			{
+				if (args.IsSuccess)
+				{
+					navigationReady.TrySetResult(true);
+				}
+				else
+				{
+					navigationReady.TrySetException(new InvalidOperationException($"The interface could not be loaded ({args.WebErrorStatus})."));
+				}
+			}
+			webView.CoreWebView2.NavigationCompleted += NavigationCompleted;
+			try
+			{
+				webView.CoreWebView2.Navigate($"https://{LocalAppHost}/{Path.GetFileName(paths.HtmlPath)}");
+				await navigationReady.Task.WaitAsync(TimeSpan.FromSeconds(20), cancellationToken);
+			}
+			finally
+			{
+				webView.CoreWebView2.NavigationCompleted -= NavigationCompleted;
+			}
 			webView.Visible = true;
 			loadingLabel.Visible = false;
 		}
@@ -662,7 +693,8 @@ internal sealed class CalculatorForm : Form
 
 	private async void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
 	{
-		string requestId = null;
+		string? requestId = null;
+		CancellationTokenSource? requestCancellation = null;
 		try
 		{
 			using JsonDocument document = JsonDocument.Parse(e.WebMessageAsJson);
@@ -675,16 +707,57 @@ internal sealed class CalculatorForm : Form
 			string command = rootElement.GetProperty("command").GetString() ?? "";
 			JsonElement value;
 			JsonElement payload = (rootElement.TryGetProperty("payload", out value) ? value : default(JsonElement));
-			PostResponse(requestId, ok: true, await ExecuteCommandAsync(command, payload), null);
+			if (string.Equals(command, "cancelRequest", StringComparison.Ordinal))
+			{
+				string targetId = payload.TryGetProperty("requestId", out JsonElement target) ? target.GetString() ?? string.Empty : string.Empty;
+				if (activeBridgeRequests.TryGetValue(targetId, out CancellationTokenSource? active))
+				{
+					active.Cancel();
+				}
+				PostResponse(requestId, ok: true, new { cancelled = !string.IsNullOrWhiteSpace(targetId) }, null);
+				return;
+			}
+
+			requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetimeCancellation.Token);
+			requestCancellation.CancelAfter(GetCommandTimeout(command));
+			if (string.IsNullOrWhiteSpace(requestId) || !activeBridgeRequests.TryAdd(requestId, requestCancellation))
+			{
+				throw new InvalidOperationException("The request identifier is invalid or already active.");
+			}
+
+			PostResponse(requestId, ok: true, await ExecuteCommandAsync(command, payload, requestCancellation.Token), null);
+		}
+		catch (OperationCanceledException)
+		{
+			PostResponse(requestId, ok: false, null, "The request timed out or was cancelled.");
 		}
 		catch (Exception ex)
 		{
 			logger.Error("Market Analytics command failed.", ex);
 			PostResponse(requestId, ok: false, null, ex.Message);
 		}
+		finally
+		{
+			if (!string.IsNullOrWhiteSpace(requestId))
+			{
+				activeBridgeRequests.TryRemove(requestId, out _);
+			}
+			requestCancellation?.Dispose();
+		}
 	}
 
-	private async Task<object?> ExecuteCommandAsync(string command, JsonElement payload)
+	private static TimeSpan GetCommandTimeout(string command)
+	{
+		return command switch
+		{
+			"selectGrindLootImage" or "scanGrindLootImage" => TimeSpan.FromMinutes(2),
+			"downloadAndInstallUpdate" => TimeSpan.FromMinutes(10),
+			"refreshEvents" or "initializeEvents" => TimeSpan.FromSeconds(75),
+			_ => TimeSpan.FromSeconds(45)
+		};
+	}
+
+	private async Task<object?> ExecuteCommandAsync(string command, JsonElement payload, CancellationToken cancellationToken)
 	{
 		switch (command)
 		{
@@ -731,25 +804,25 @@ internal sealed class CalculatorForm : Form
 			return new { opened = true };
 		}
 		case "initializeCoupons":
-			return await couponService.InitializeAsync(CancellationToken.None);
+			return await couponService.InitializeAsync(cancellationToken);
 		case "refreshCoupons":
-			return await couponService.RefreshAsync(CancellationToken.None);
+			return await couponService.RefreshAsync(cancellationToken);
 		case "initializeEvents":
-			return await LoadEventsWithBrowserFallbackAsync(forceRefresh: false);
+			return await LoadEventsWithBrowserFallbackAsync(forceRefresh: false, cancellationToken);
 		case "refreshEvents":
-			return await LoadEventsWithBrowserFallbackAsync(forceRefresh: true);
+			return await LoadEventsWithBrowserFallbackAsync(forceRefresh: true, cancellationToken);
 		case "checkForUpdates":
-			return await updateCheckerService.CheckAsync(CancellationToken.None);
+			return await updateCheckerService.CheckAsync(cancellationToken);
 		case "downloadAndInstallUpdate":
-			return await DownloadAndLaunchUpdateInstallerAsync(CancellationToken.None);
+			return await DownloadAndLaunchUpdateInstallerAsync(cancellationToken);
 		case "saveCouponSettings":
 		{
 			CouponSettings settings = JsonSerializer.Deserialize<CouponSettings>(payload.GetRawText(), JsonOptions)
 				?? new CouponSettings(true, true, "", "all");
-			return await couponService.SaveSettingsAsync(settings, CancellationToken.None);
+			return await couponService.SaveSettingsAsync(settings, cancellationToken);
 		}
 		case "exportCoupons":
-			return await ExportCouponsAsync();
+			return await ExportCouponsAsync(cancellationToken);
 		case "setCouponBadgeCount":
 		{
 			int count = payload.TryGetProperty("count", out JsonElement countValue) && countValue.TryGetInt32(out int parsedCount)
@@ -759,12 +832,12 @@ internal sealed class CalculatorForm : Form
 			return new { count = Math.Max(0, count) };
 		}
 		case "getAppBehaviorSettings":
-			return await AppBehaviorSettings.LoadAsync(paths, CancellationToken.None);
+			return await AppBehaviorSettings.LoadAsync(paths, cancellationToken);
 		case "saveAppBehaviorSettings":
 		{
 			JsonElement value;
 			bool enabled = !payload.TryGetProperty("minimizeToTray", out value) || value.GetBoolean();
-			AppBehaviorSettings settings = await AppBehaviorSettings.SaveAsync(paths, new AppBehaviorSettings(enabled), CancellationToken.None);
+			AppBehaviorSettings settings = await AppBehaviorSettings.SaveAsync(paths, new AppBehaviorSettings(enabled), cancellationToken);
 			minimizeToTray = settings.MinimizeToTray;
 			return settings;
 		}
@@ -783,9 +856,9 @@ internal sealed class CalculatorForm : Form
 			PlayAlarmSound();
 			return new { played = true };
 		case "selectGrindLootImage":
-			return await SelectGrindLootImageAsync(payload);
+			return await SelectGrindLootImageAsync(payload, cancellationToken);
 		case "scanGrindLootImage":
-			return await ScanGrindLootImageAsync(payload);
+			return await ScanGrindLootImageAsync(payload, cancellationToken);
 		case "speakText":
 		{
 			string text = payload.TryGetProperty("text", out JsonElement textValue)
@@ -815,7 +888,7 @@ internal sealed class CalculatorForm : Form
 					}
 				}
 			}
-			return await grindMarketPriceProvider.GetPricesAsync(itemIds, region, CancellationToken.None);
+			return await grindMarketPriceProvider.GetPricesAsync(itemIds, region, cancellationToken);
 		}
 		default:
 		{
@@ -830,7 +903,7 @@ internal sealed class CalculatorForm : Form
 				{
 					settings = settings,
 					provider = providerName,
-					items = await service.GetTrackedItemsAsync(CancellationToken.None)
+					items = await service.GetTrackedItemsAsync(cancellationToken)
 				};
 			}
 			case "getRegionState":
@@ -840,71 +913,71 @@ internal sealed class CalculatorForm : Form
 				return new
 				{
 					region = region,
-					items = await service.GetTrackedItemsAsync(region, CancellationToken.None),
-					outfits = await service.GetOutfitReportAsync(region, CancellationToken.None)
+					items = await service.GetTrackedItemsAsync(region, cancellationToken),
+					outfits = await service.GetOutfitReportAsync(region, cancellationToken)
 				};
 			}
 			case "search":
-				return await service.SearchAsync(payload.GetProperty("query").GetString() ?? "", CancellationToken.None);
+				return await service.SearchAsync(payload.GetProperty("query").GetString() ?? "", cancellationToken);
 			case "getVariants":
-				return await service.GetVariantsAsync(payload.GetProperty("itemId").GetInt64(), CancellationToken.None);
+				return await service.GetVariantsAsync(payload.GetProperty("itemId").GetInt64(), cancellationToken);
 			case "addTracked":
 			{
 				MarketItem item = JsonSerializer.Deserialize<MarketItem>(payload.GetRawText(), JsonOptions) ?? throw new InvalidDataException("Invalid item selection.");
-				await service.AddTrackedItemAsync(item, CancellationToken.None);
-				return await service.GetTrackedItemsAsync(CancellationToken.None);
+				await service.AddTrackedItemAsync(item, cancellationToken);
+				return await service.GetTrackedItemsAsync(cancellationToken);
 			}
 			case "removeTracked":
-				await service.RemoveTrackedItemAsync(payload.GetProperty("itemId").GetInt64(), payload.GetProperty("enhancement").GetInt32(), CancellationToken.None);
-				return await service.GetTrackedItemsAsync(CancellationToken.None);
+				await service.RemoveTrackedItemAsync(payload.GetProperty("itemId").GetInt64(), payload.GetProperty("enhancement").GetInt32(), cancellationToken);
+				return await service.GetTrackedItemsAsync(cancellationToken);
 			case "getAnalytics":
 			{
 				JsonElement value9;
 				JsonElement value12;
 				string region = payload.TryGetProperty("region", out value12) ? value12.GetString() ?? service.Settings.Region : service.Settings.Region;
-				return await service.GetAnalyticsAsync(payload.GetProperty("itemId").GetInt64(), payload.GetProperty("enhancement").GetInt32(), region, payload.TryGetProperty("days", out value9) ? value9.GetInt32() : 30, CancellationToken.None);
+				return await service.GetAnalyticsAsync(payload.GetProperty("itemId").GetInt64(), payload.GetProperty("enhancement").GetInt32(), region, payload.TryGetProperty("days", out value9) ? value9.GetInt32() : 30, cancellationToken);
 			}
 			case "getOutfitReport":
 			{
 				JsonElement value10;
 				string region = payload.TryGetProperty("region", out value10) ? value10.GetString() ?? service.Settings.Region : service.Settings.Region;
-				return await service.GetOutfitReportAsync(region, CancellationToken.None);
+				return await service.GetOutfitReportAsync(region, cancellationToken);
 			}
 			case "refreshOutfits":
-				await service.RefreshOutfitsAsync(600, CancellationToken.None);
+				await service.RefreshOutfitsAsync(MarketAnalyticsService.DefaultOutfitsPerScan, cancellationToken);
 			{
 				JsonElement value11;
 				string region = payload.TryGetProperty("region", out value11) ? value11.GetString() ?? service.Settings.Region : service.Settings.Region;
-				return await service.GetOutfitReportAsync(region, CancellationToken.None);
+				return await service.GetOutfitReportAsync(region, cancellationToken);
 			}
 			case "refresh":
-				await service.RefreshAllAsync(CancellationToken.None);
+				await service.RefreshAllAsync(cancellationToken);
 			{
 				JsonElement value13;
 				string region = payload.TryGetProperty("region", out value13) ? value13.GetString() ?? service.Settings.Region : service.Settings.Region;
 				return new
 				{
 					region = region,
-					items = await service.GetTrackedItemsAsync(region, CancellationToken.None),
-					outfits = await service.GetOutfitReportAsync(region, CancellationToken.None)
+					items = await service.GetTrackedItemsAsync(region, cancellationToken),
+					outfits = await service.GetOutfitReportAsync(region, cancellationToken)
 				};
 			}
 			case "saveSettings":
 			{
-				await service.SaveSettingsAsync(payload.GetProperty("region").GetString() ?? "na", service.Settings.IntervalMinutes, CancellationToken.None);
+				await service.SaveSettingsAsync("eu", service.Settings.IntervalMinutes, cancellationToken);
 				MarketSettings settings = service.Settings;
 				return new
 				{
 					settings = settings,
-					items = await service.GetTrackedItemsAsync(CancellationToken.None)
+					items = await service.GetTrackedItemsAsync(cancellationToken)
 				};
 			}
 			case "exportCsv":
-				return await ExportCsvAsync(service);
+				return await ExportCsvAsync(service, cancellationToken);
 			case "getPortraitSettings":
-				return await portraitReplacerService.GetSettingsAsync(CancellationToken.None);
+				return await portraitReplacerService.GetSettingsAsync(cancellationToken);
 			case "selectFaceTextureFolder":
-				return await SelectFaceTextureFolderAsync(payload);
+				return await SelectFaceTextureFolderAsync(payload, cancellationToken);
 			case "selectOldPortrait":
 				return SelectOldPortrait(payload);
 			case "selectNewPortrait":
@@ -915,7 +988,12 @@ internal sealed class CalculatorForm : Form
 				JsonElement value6;
 				JsonElement value7;
 				JsonElement value8;
-				return portraitReplacerService.DescribeImage(payload.GetProperty("newImagePath").GetString() ?? "", renderFinal: true, payload.TryGetProperty("cropMode", out value5) ? (value5.GetString() ?? "crop") : "crop", payload.TryGetProperty("cropX", out value6) ? value6.GetDouble() : 50.0, payload.TryGetProperty("cropY", out value7) ? value7.GetDouble() : 50.0, payload.TryGetProperty("zoom", out value8) ? value8.GetDouble() : 1.0);
+				string imagePath = payload.GetProperty("newImagePath").GetString() ?? "";
+				string cropMode = payload.TryGetProperty("cropMode", out value5) ? value5.GetString() ?? "crop" : "crop";
+				double cropX = payload.TryGetProperty("cropX", out value6) ? value6.GetDouble() : 50.0;
+				double cropY = payload.TryGetProperty("cropY", out value7) ? value7.GetDouble() : 50.0;
+				double zoom = payload.TryGetProperty("zoom", out value8) ? value8.GetDouble() : 1.0;
+				return await Task.Run(() => portraitReplacerService.DescribeImage(imagePath, renderFinal: true, cropMode, cropX, cropY, zoom), cancellationToken);
 			}
 			case "replacePortrait":
 			{
@@ -923,28 +1001,28 @@ internal sealed class CalculatorForm : Form
 				JsonElement value2;
 				JsonElement value3;
 				JsonElement value4;
-				return await portraitReplacerService.ReplaceAsync(payload.GetProperty("faceTextureFolder").GetString() ?? "", payload.GetProperty("oldImagePath").GetString() ?? "", payload.GetProperty("newImagePath").GetString() ?? "", payload.TryGetProperty("cropMode", out value) ? (value.GetString() ?? "crop") : "crop", payload.TryGetProperty("cropX", out value2) ? value2.GetDouble() : 50.0, payload.TryGetProperty("cropY", out value3) ? value3.GetDouble() : 50.0, payload.TryGetProperty("zoom", out value4) ? value4.GetDouble() : 1.0, CancellationToken.None);
+				return await portraitReplacerService.ReplaceAsync(payload.GetProperty("faceTextureFolder").GetString() ?? "", payload.GetProperty("oldImagePath").GetString() ?? "", payload.GetProperty("newImagePath").GetString() ?? "", payload.TryGetProperty("cropMode", out value) ? (value.GetString() ?? "crop") : "crop", payload.TryGetProperty("cropX", out value2) ? value2.GetDouble() : 50.0, payload.TryGetProperty("cropY", out value3) ? value3.GetDouble() : 50.0, payload.TryGetProperty("zoom", out value4) ? value4.GetDouble() : 1.0, cancellationToken);
 			}
 			case "openPortraitBackupFolder":
 				return portraitReplacerService.OpenBackupFolder(payload.GetProperty("faceTextureFolder").GetString() ?? "");
 			case "restoreLastPortraitBackup":
-				return await portraitReplacerService.RestoreLastBackupAsync(payload.GetProperty("faceTextureFolder").GetString() ?? "", payload.GetProperty("oldImagePath").GetString() ?? "", CancellationToken.None);
+				return await portraitReplacerService.RestoreLastBackupAsync(payload.GetProperty("faceTextureFolder").GetString() ?? "", payload.GetProperty("oldImagePath").GetString() ?? "", cancellationToken);
 			case "getFontChangerSettings":
-				return await fontChangerService.GetSettingsAsync(CancellationToken.None);
+				return await fontChangerService.GetSettingsAsync(cancellationToken);
 			case "getFontPresets":
-				return fontChangerService.GetPresetGallery();
+				return await Task.Run(fontChangerService.GetPresetGallery, cancellationToken);
 			case "selectBdoFolder":
-				return await SelectBdoFolderAsync(payload);
+				return await SelectBdoFolderAsync(payload, cancellationToken);
 			case "selectCustomFont":
-				return SelectCustomFont(payload);
+				return await SelectCustomFontAsync(payload, cancellationToken);
 			case "applyPresetFont":
-				return await fontChangerService.ApplyPresetAsync(payload.GetProperty("bdoFolder").GetString() ?? "", payload.GetProperty("presetId").GetString() ?? "", CancellationToken.None);
+				return await fontChangerService.ApplyPresetAsync(payload.GetProperty("bdoFolder").GetString() ?? "", payload.GetProperty("presetId").GetString() ?? "", cancellationToken);
 			case "applyCustomFont":
-				return await fontChangerService.ApplyCustomAsync(payload.GetProperty("bdoFolder").GetString() ?? "", payload.GetProperty("fontPath").GetString() ?? "", CancellationToken.None);
+				return await fontChangerService.ApplyCustomAsync(payload.GetProperty("bdoFolder").GetString() ?? "", payload.GetProperty("fontPath").GetString() ?? "", cancellationToken);
 			case "restoreLastFontBackup":
-				return await fontChangerService.RestoreLastBackupAsync(payload.GetProperty("bdoFolder").GetString() ?? "", CancellationToken.None);
+				return await fontChangerService.RestoreLastBackupAsync(payload.GetProperty("bdoFolder").GetString() ?? "", cancellationToken);
 			case "removeCustomFont":
-				return await fontChangerService.RemoveCustomFontAsync(payload.GetProperty("bdoFolder").GetString() ?? "", CancellationToken.None);
+				return await fontChangerService.RemoveCustomFontAsync(payload.GetProperty("bdoFolder").GetString() ?? "", cancellationToken);
 			case "openBdoFontFolder":
 				return fontChangerService.OpenFontFolder(payload.GetProperty("bdoFolder").GetString() ?? "");
 			default:
@@ -954,11 +1032,11 @@ internal sealed class CalculatorForm : Form
 		}
 	}
 
-	private async Task<object> LoadEventsWithBrowserFallbackAsync(bool forceRefresh)
+	private async Task<object> LoadEventsWithBrowserFallbackAsync(bool forceRefresh, CancellationToken cancellationToken)
 	{
 		object dashboard = forceRefresh
-			? await eventService.RefreshAsync(CancellationToken.None)
-			: await eventService.InitializeAsync(CancellationToken.None);
+			? await eventService.RefreshAsync(cancellationToken)
+			: await eventService.InitializeAsync(cancellationToken);
 
 		if (EventDashboardHasEvents(dashboard))
 			return dashboard;
@@ -966,8 +1044,8 @@ internal sealed class CalculatorForm : Form
 		try
 		{
 			logger.Info("Events browser fallback started.");
-			string html = await ReadOfficialEventsHtmlWithBrowserAsync(CancellationToken.None);
-			object refreshed = await eventService.RefreshFromRenderedHtmlAsync(html, CancellationToken.None);
+			string html = await ReadOfficialEventsHtmlWithBrowserAsync(cancellationToken);
+			object refreshed = await eventService.RefreshFromRenderedHtmlAsync(html, cancellationToken);
 			logger.Info("Events browser fallback succeeded.");
 			return refreshed;
 		}
@@ -1150,9 +1228,9 @@ internal sealed class CalculatorForm : Form
 		};
 	}
 
-	private async Task<object> ExportCouponsAsync()
+	private async Task<object> ExportCouponsAsync(CancellationToken cancellationToken)
 	{
-		IReadOnlyList<CouponEntry> coupons = await couponService.GetCouponsAsync(CancellationToken.None);
+		IReadOnlyList<CouponEntry> coupons = await couponService.GetCouponsAsync(cancellationToken);
 		using SaveFileDialog dialog = new SaveFileDialog
 		{
 			Title = "Export coupon list",
@@ -1205,7 +1283,7 @@ internal sealed class CalculatorForm : Form
 	[DllImport("user32.dll")]
 	private static extern nint SendMessage(nint hWnd, int msg, nint wParam, nint lParam);
 
-	private async Task<object> SelectBdoFolderAsync(JsonElement payload)
+	private async Task<object> SelectBdoFolderAsync(JsonElement payload, CancellationToken cancellationToken)
 	{
 		JsonElement value;
 		string text = (payload.TryGetProperty("currentPath", out value) ? (value.GetString() ?? "") : "");
@@ -1226,11 +1304,11 @@ internal sealed class CalculatorForm : Form
 		return new
 		{
 			cancelled = false,
-			bdoFolder = (await fontChangerService.SaveBdoFolderAsync(dialog.SelectedPath, CancellationToken.None)).BdoFolder
+			bdoFolder = (await fontChangerService.SaveBdoFolderAsync(dialog.SelectedPath, cancellationToken)).BdoFolder
 		};
 	}
 
-	private object SelectCustomFont(JsonElement payload)
+	private async Task<object> SelectCustomFontAsync(JsonElement payload, CancellationToken cancellationToken)
 	{
 		JsonElement value;
 		string path = (payload.TryGetProperty("currentPath", out value) ? (value.GetString() ?? "") : "");
@@ -1249,14 +1327,15 @@ internal sealed class CalculatorForm : Form
 				cancelled = true
 			};
 		}
+		object font = await Task.Run(() => fontChangerService.DescribeCustomFont(openFileDialog.FileName), cancellationToken);
 		return new
 		{
 			cancelled = false,
-			font = fontChangerService.DescribeCustomFont(openFileDialog.FileName)
+			font
 		};
 	}
 
-	private async Task<object> SelectFaceTextureFolderAsync(JsonElement payload)
+	private async Task<object> SelectFaceTextureFolderAsync(JsonElement payload, CancellationToken cancellationToken)
 	{
 		JsonElement value;
 		string text = (payload.TryGetProperty("currentPath", out value) ? (value.GetString() ?? "") : "");
@@ -1277,7 +1356,7 @@ internal sealed class CalculatorForm : Form
 		return new
 		{
 			cancelled = false,
-			faceTextureFolder = (await portraitReplacerService.SaveFaceTextureFolderAsync(dialog.SelectedPath, CancellationToken.None)).FaceTextureFolder
+			faceTextureFolder = (await portraitReplacerService.SaveFaceTextureFolderAsync(dialog.SelectedPath, cancellationToken)).FaceTextureFolder
 		};
 	}
 
@@ -1345,7 +1424,7 @@ internal sealed class CalculatorForm : Form
 		};
 	}
 
-	private async Task<object> ExportCsvAsync(MarketAnalyticsService service)
+	private async Task<object> ExportCsvAsync(MarketAnalyticsService service, CancellationToken cancellationToken)
 	{
 		using SaveFileDialog dialog = new SaveFileDialog
 		{
@@ -1362,7 +1441,7 @@ internal sealed class CalculatorForm : Form
 				cancelled = true
 			};
 		}
-		await service.ExportCsvAsync(dialog.FileName, CancellationToken.None);
+		await service.ExportCsvAsync(dialog.FileName, cancellationToken);
 		return new
 		{
 			cancelled = false,
@@ -1370,7 +1449,7 @@ internal sealed class CalculatorForm : Form
 		};
 	}
 
-	private async Task<object> SelectGrindLootImageAsync(JsonElement payload)
+	private async Task<object> SelectGrindLootImageAsync(JsonElement payload, CancellationToken cancellationToken)
 	{
 		List<GrindScanDrop> drops = ReadGrindScanDrops(payload);
 		using OpenFileDialog dialog = new OpenFileDialog
@@ -1386,10 +1465,10 @@ internal sealed class CalculatorForm : Form
 		}
 
 		string fileName = Path.GetFileName(dialog.FileName);
-		return await BuildGrindLootImageScanResponseAsync(fileName, dialog.FileName, dialog.FileName, drops);
+		return await BuildGrindLootImageScanResponseAsync(fileName, dialog.FileName, dialog.FileName, drops, cancellationToken);
 	}
 
-	private async Task<object> ScanGrindLootImageAsync(JsonElement payload)
+	private async Task<object> ScanGrindLootImageAsync(JsonElement payload, CancellationToken cancellationToken)
 	{
 		List<GrindScanDrop> drops = ReadGrindScanDrops(payload);
 		string fileName = payload.TryGetProperty("fileName", out JsonElement fileNameValue)
@@ -1410,10 +1489,10 @@ internal sealed class CalculatorForm : Form
 			extension = ".png";
 		}
 		string tempPath = Path.Combine(Path.GetTempPath(), $"bdo-grind-loot-{Guid.NewGuid():N}{extension}");
-		await File.WriteAllBytesAsync(tempPath, bytes, CancellationToken.None);
+		await File.WriteAllBytesAsync(tempPath, bytes, cancellationToken);
 		try
 		{
-			return await BuildGrindLootImageScanResponseAsync(fileName, tempPath, null, drops);
+			return await BuildGrindLootImageScanResponseAsync(fileName, tempPath, null, drops, cancellationToken);
 		}
 		finally
 		{
@@ -1421,11 +1500,15 @@ internal sealed class CalculatorForm : Form
 		}
 	}
 
-	private async Task<object> BuildGrindLootImageScanResponseAsync(string fileName, string imagePath, string? sourcePath, IReadOnlyList<GrindScanDrop> drops)
+	private async Task<object> BuildGrindLootImageScanResponseAsync(string fileName, string imagePath, string? sourcePath, IReadOnlyList<GrindScanDrop> drops, CancellationToken cancellationToken)
 	{
-		string dataUrl = await CreateImagePreviewDataUrlAsync(imagePath);
-		string screenshotText = await TryReadImageTextAsync(imagePath);
-		List<GrindLootImageMatch> matches = await ScanGrindLootImageForDropsAsync(imagePath, drops);
+		Task<string> previewTask = Task.Run(() => CreateImagePreviewDataUrlAsync(imagePath), cancellationToken);
+		Task<string> textTask = TryReadImageTextAsync(imagePath);
+		Task<List<GrindLootImageMatch>> scanTask = Task.Run(() => ScanGrindLootImageForDropsAsync(imagePath, drops, cancellationToken), cancellationToken);
+		await Task.WhenAll(previewTask, textTask, scanTask);
+		string dataUrl = await previewTask;
+		string screenshotText = await textTask;
+		List<GrindLootImageMatch> matches = await scanTask;
 		return new
 		{
 			cancelled = false,
@@ -1546,7 +1629,7 @@ internal sealed class CalculatorForm : Form
 		return "data:image/png;base64," + Convert.ToBase64String(stream.ToArray());
 	}
 
-	private static async Task<List<GrindLootImageMatch>> ScanGrindLootImageForDropsAsync(string imagePath, IReadOnlyList<GrindScanDrop> drops)
+	private static async Task<List<GrindLootImageMatch>> ScanGrindLootImageForDropsAsync(string imagePath, IReadOnlyList<GrindScanDrop> drops, CancellationToken cancellationToken)
 	{
 		List<GrindLootImageMatch> matches = new();
 		if (drops.Count == 0)
@@ -1558,10 +1641,11 @@ internal sealed class CalculatorForm : Form
 		List<LoadedGrindScanDrop> icons = new();
 		foreach (GrindScanDrop drop in drops)
 		{
+			cancellationToken.ThrowIfCancellationRequested();
 			try
 			{
-				Bitmap bitmap = await LoadBitmapAsync(drop.IconPath);
-				icons.Add(new LoadedGrindScanDrop(drop, bitmap));
+				using Bitmap bitmap = await LoadBitmapAsync(drop.IconPath);
+				icons.Add(new LoadedGrindScanDrop(drop, ResizeBitmap(bitmap, 40)));
 			}
 			catch
 			{
@@ -1571,10 +1655,11 @@ internal sealed class CalculatorForm : Form
 		try
 		{
 			Dictionary<string, GrindLootImageMatch> byId = new(StringComparer.OrdinalIgnoreCase);
-			foreach (Rectangle candidate in FindInventoryIconCandidates(screenshot))
+			foreach (Rectangle candidate in FindInventoryIconCandidates(screenshot, cancellationToken))
 			{
+				cancellationToken.ThrowIfCancellationRequested();
 				using Bitmap crop = screenshot.Clone(candidate, screenshot.PixelFormat);
-				GrindIconMatch match = FindBestGrindDropMatch(crop, icons);
+				GrindIconMatch match = FindBestGrindDropMatch(crop, icons, cancellationToken);
 				if (!IsConfidentGrindDropMatch(match))
 				{
 					continue;
@@ -1612,7 +1697,7 @@ internal sealed class CalculatorForm : Form
 		}
 	}
 
-	private static GrindIconMatch FindBestGrindDropMatch(Bitmap candidate, IReadOnlyList<LoadedGrindScanDrop> icons)
+	private static GrindIconMatch FindBestGrindDropMatch(Bitmap candidate, IReadOnlyList<LoadedGrindScanDrop> icons, CancellationToken cancellationToken)
 	{
 		LoadedGrindScanDrop? best = null;
 		LoadedGrindScanDrop? runnerUpDrop = null;
@@ -1620,6 +1705,7 @@ internal sealed class CalculatorForm : Form
 		GrindIconScore runnerUp = GrindIconScore.Empty;
 		foreach (LoadedGrindScanDrop icon in icons)
 		{
+			cancellationToken.ThrowIfCancellationRequested();
 			GrindIconScore score = ScoreIconMatch(candidate, icon.Bitmap);
 			if (score.Composite > bestScore.Composite)
 			{
@@ -1692,7 +1778,7 @@ internal sealed class CalculatorForm : Form
 	private static GrindIconScore ScoreIconMatchAtSize(Bitmap candidate, Bitmap icon)
 	{
 		using Bitmap a = ResizeBitmap(candidate, 40);
-		using Bitmap b = ResizeBitmap(icon, 40);
+		Bitmap b = icon;
 		double diff = 0;
 		double weight = 0;
 		double edgeDiff = 0;
@@ -1802,45 +1888,80 @@ internal sealed class CalculatorForm : Form
 		return (color.R + color.G + color.B) / 3.0;
 	}
 
-	private static List<Rectangle> FindInventoryIconCandidates(Bitmap image)
+	private static unsafe List<Rectangle> FindInventoryIconCandidates(Bitmap image, CancellationToken cancellationToken)
 	{
 		int width = image.Width;
 		int height = image.Height;
-		bool[,] mask = new bool[width, height];
+		using Bitmap pixels = new(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+		using (Graphics graphics = Graphics.FromImage(pixels))
+		{
+			graphics.DrawImageUnscaled(image, 0, 0);
+		}
+
+		bool[] foreground = new bool[width * height];
+		System.Drawing.Imaging.BitmapData data = pixels.LockBits(
+			new Rectangle(0, 0, width, height),
+			System.Drawing.Imaging.ImageLockMode.ReadOnly,
+			System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+		try
+		{
+			for (int y = 0; y < height; y++)
+			{
+				cancellationToken.ThrowIfCancellationRequested();
+				byte* row = (byte*)data.Scan0 + (y * data.Stride);
+				int rowOffset = y * width;
+				for (int x = 0; x < width; x++)
+				{
+					byte* pixel = row + (x * 4);
+					foreground[rowOffset + x] = IsInventoryForegroundPixel(pixel[2], pixel[1], pixel[0]);
+				}
+			}
+		}
+		finally
+		{
+			pixels.UnlockBits(data);
+		}
+
+		bool[] mask = new bool[foreground.Length];
 		for (int y = 0; y < height; y++)
 		{
+			cancellationToken.ThrowIfCancellationRequested();
 			for (int x = 0; x < width; x++)
 			{
-				if (!IsInventoryForegroundPixel(image.GetPixel(x, y)))
+				if (!foreground[(y * width) + x])
 				{
 					continue;
 				}
 				for (int yy = Math.Max(0, y - 3); yy <= Math.Min(height - 1, y + 3); yy++)
 				{
+					int offset = yy * width;
 					for (int xx = Math.Max(0, x - 3); xx <= Math.Min(width - 1, x + 3); xx++)
 					{
-						mask[xx, yy] = true;
+						mask[offset + xx] = true;
 					}
 				}
 			}
 		}
 
-		bool[,] seen = new bool[width, height];
+		bool[] seen = new bool[mask.Length];
 		List<Rectangle> candidates = new();
 		int[] dx = { -1, 0, 1, -1, 1, -1, 0, 1 };
 		int[] dy = { -1, -1, -1, 0, 0, 1, 1, 1 };
+		Queue<int> queue = new();
 		for (int y = 0; y < height; y++)
 		{
+			cancellationToken.ThrowIfCancellationRequested();
 			for (int x = 0; x < width; x++)
 			{
-				if (!mask[x, y] || seen[x, y])
+				int start = (y * width) + x;
+				if (!mask[start] || seen[start])
 				{
 					continue;
 				}
 
-				Queue<Point> queue = new();
-				queue.Enqueue(new Point(x, y));
-				seen[x, y] = true;
+				queue.Clear();
+				queue.Enqueue(start);
+				seen[start] = true;
 				int minX = x;
 				int maxX = x;
 				int minY = y;
@@ -1848,20 +1969,27 @@ internal sealed class CalculatorForm : Form
 				int count = 0;
 				while (queue.Count > 0)
 				{
-					Point point = queue.Dequeue();
+					int point = queue.Dequeue();
+					int pointX = point % width;
+					int pointY = point / width;
 					count++;
-					minX = Math.Min(minX, point.X);
-					maxX = Math.Max(maxX, point.X);
-					minY = Math.Min(minY, point.Y);
-					maxY = Math.Max(maxY, point.Y);
+					minX = Math.Min(minX, pointX);
+					maxX = Math.Max(maxX, pointX);
+					minY = Math.Min(minY, pointY);
+					maxY = Math.Max(maxY, pointY);
 					for (int index = 0; index < dx.Length; index++)
 					{
-						int nextX = point.X + dx[index];
-						int nextY = point.Y + dy[index];
-						if (nextX >= 0 && nextY >= 0 && nextX < width && nextY < height && mask[nextX, nextY] && !seen[nextX, nextY])
+						int nextX = pointX + dx[index];
+						int nextY = pointY + dy[index];
+						if (nextX < 0 || nextY < 0 || nextX >= width || nextY >= height)
 						{
-							seen[nextX, nextY] = true;
-							queue.Enqueue(new Point(nextX, nextY));
+							continue;
+						}
+						int next = (nextY * width) + nextX;
+						if (mask[next] && !seen[next])
+						{
+							seen[next] = true;
+							queue.Enqueue(next);
 						}
 					}
 				}
@@ -2090,9 +2218,14 @@ internal sealed class CalculatorForm : Form
 
 	private static bool IsInventoryForegroundPixel(Color color)
 	{
-		int max = Math.Max(color.R, Math.Max(color.G, color.B));
-		int min = Math.Min(color.R, Math.Min(color.G, color.B));
-		double brightness = (color.R + color.G + color.B) / 3.0;
+		return IsInventoryForegroundPixel(color.R, color.G, color.B);
+	}
+
+	private static bool IsInventoryForegroundPixel(byte red, byte green, byte blue)
+	{
+		int max = Math.Max(red, Math.Max(green, blue));
+		int min = Math.Min(red, Math.Min(green, blue));
+		double brightness = (red + green + blue) / 3.0;
 		return (max - min > 35 && brightness > 35) || (brightness > 105 && max - min < 95);
 	}
 
@@ -2218,7 +2351,15 @@ internal sealed class CalculatorForm : Form
 
 	private bool IsTrustedLocalUi(string value)
 	{
-		if (!Uri.TryCreate(value, UriKind.Absolute, out Uri result) || !result.IsFile)
+		if (!Uri.TryCreate(value, UriKind.Absolute, out Uri result))
+		{
+			return false;
+		}
+		if (result.Scheme == Uri.UriSchemeHttps && string.Equals(result.Host, LocalAppHost, StringComparison.OrdinalIgnoreCase))
+		{
+			return true;
+		}
+		if (!result.IsFile)
 		{
 			return false;
 		}

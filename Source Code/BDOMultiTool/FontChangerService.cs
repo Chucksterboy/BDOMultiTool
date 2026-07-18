@@ -28,6 +28,12 @@ internal sealed class FontChangerService
 
 	private readonly string presetFolder;
 
+	private readonly object galleryCacheSync = new();
+
+	private string galleryFingerprint = string.Empty;
+
+	private object? cachedGallery;
+
 	private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
 	{
 		PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -90,8 +96,18 @@ internal sealed class FontChangerService
 				presets = Array.Empty<object>()
 			};
 		}
+		string[] files = Directory.EnumerateFiles(presetFolder, "*.ttf", SearchOption.TopDirectoryOnly).OrderBy<string, string>(Path.GetFileName, StringComparer.OrdinalIgnoreCase).ToArray();
+		string fingerprint = string.Join("|", files.Select(path => $"{Path.GetFileName(path)}:{new FileInfo(path).Length}:{File.GetLastWriteTimeUtc(path).Ticks}"));
+		lock (galleryCacheSync)
+		{
+			if (cachedGallery is not null && string.Equals(galleryFingerprint, fingerprint, StringComparison.Ordinal))
+			{
+				return cachedGallery;
+			}
+		}
+
 		List<object> list = new List<object>();
-		foreach (string item in Directory.EnumerateFiles(presetFolder, "*.ttf", SearchOption.TopDirectoryOnly).OrderBy<string, string>(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
+		foreach (string item in files)
 		{
 			try
 			{
@@ -109,10 +125,16 @@ internal sealed class FontChangerService
 			{
 			}
 		}
-		return new
+		object gallery = new
 		{
 			presets = list
 		};
+		lock (galleryCacheSync)
+		{
+			galleryFingerprint = fingerprint;
+			cachedGallery = gallery;
+		}
+		return gallery;
 	}
 
 	public object DescribeCustomFont(string filePath)

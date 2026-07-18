@@ -1,6 +1,6 @@
 ﻿{
-    "version":  "v0.9.6",
+    "version":  "v0.9.7",
     "releaseUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest",
     "downloadUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest/download/BDO-Multi-Tool-Installer.exe",
-    "notes":  "Cleanup unused bundled assets, reduce package size, and sharpen grind spot picker icons."
+    "notes":  "Performance and reliability overhaul: faster startup and UI rendering, responsive background work with cancellation and timeouts, efficient 24-hour EU market caching, reduced market and event request load, optimized database queries, reduced-motion support, stronger automated verification, and clearer zero-hour summaries."
 }

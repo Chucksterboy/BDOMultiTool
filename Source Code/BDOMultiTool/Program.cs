@@ -5,7 +5,6 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.IO.Pipes;
 using System.Linq;
-using System.Reflection;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -16,8 +15,6 @@ namespace BDOMultiTool;
 
 internal static class Program
 {
-	private const string ResourceName = "BDOMultiTool.Resources.BDO_Multi_Tool.html";
-
 	private const string SingleInstanceMutexName = "Local\\BDOMultiTool.SingleInstance";
 
 	private const string SingleInstancePipeName = "BDOMultiTool.SingleInstance.Restore";
@@ -103,6 +100,10 @@ internal static class Program
 		if (args.Any((string a) => string.Equals(a, "--smoke-test", StringComparison.OrdinalIgnoreCase)))
 		{
 			Environment.Exit(RunSmokeTestAsync(appPaths3, logger3).GetAwaiter().GetResult());
+		}
+		else if (args.Any((string a) => string.Equals(a, "--offline-smoke-test", StringComparison.OrdinalIgnoreCase)))
+		{
+			Environment.Exit(RunOfflineSmokeTestAsync(logger3).GetAwaiter().GetResult());
 		}
 		else if (args.Any((string a) => string.Equals(a, "--market-scheduled-update", StringComparison.OrdinalIgnoreCase)))
 		{
@@ -371,39 +372,98 @@ internal static class Program
 		}
 	}
 
-	private static void ExtractResource(string resourceName, string targetPath)
-	{
-		using Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName) ?? throw new InvalidOperationException("The embedded resource is missing: " + resourceName);
-		using MemoryStream memoryStream = new MemoryStream();
-		stream.CopyTo(memoryStream);
-		byte[] array = memoryStream.ToArray();
-		string targetDirectory = Path.GetDirectoryName(targetPath);
-		if (!string.IsNullOrWhiteSpace(targetDirectory))
-		{
-			Directory.CreateDirectory(targetDirectory);
-		}
-		if (!File.Exists(targetPath) || new FileInfo(targetPath).Length != array.Length)
-		{
-			File.WriteAllBytes(targetPath, array);
-		}
-	}
-
 	private static void PrepareUiFiles(AppPaths paths)
 	{
 		string baseDirectory = AppContext.BaseDirectory;
 		string htmlSource = Path.Combine(baseDirectory, "BDOMultiTool.Resources.BDO_Multi_Tool.html");
-		if (File.Exists(htmlSource))
+		string cssSource = Path.Combine(baseDirectory, "BDOMultiTool.Resources.BDO_Multi_Tool.css");
+		string scriptSource = Path.Combine(baseDirectory, "BDOMultiTool.Resources.BDO_Multi_Tool.js");
+		string cssTarget = Path.Combine(paths.Root, Path.GetFileName(cssSource));
+		string scriptTarget = Path.Combine(paths.Root, Path.GetFileName(scriptSource));
+		string versionStampPath = Path.Combine(paths.Root, ".assets-version");
+		bool assetsReady = File.Exists(paths.HtmlPath)
+			&& File.Exists(cssTarget)
+			&& File.Exists(scriptTarget)
+			&& Directory.Exists(Path.Combine(paths.Root, "Assets"))
+			&& Directory.Exists(paths.ThemeAssetsPath)
+			&& File.Exists(versionStampPath)
+			&& string.Equals(File.ReadAllText(versionStampPath).Trim(), AppVersion.Current, StringComparison.Ordinal);
+		if (assetsReady)
 		{
-			CopyFileIfChanged(htmlSource, paths.HtmlPath);
+			return;
 		}
-		else
+		if (!File.Exists(htmlSource) || !File.Exists(cssSource) || !File.Exists(scriptSource))
 		{
-			ExtractResource(ResourceName, paths.HtmlPath);
+			throw new FileNotFoundException("The application interface is missing.", htmlSource);
 		}
 
+		CopyFileIfChanged(htmlSource, paths.HtmlPath);
+		CopyFileIfChanged(cssSource, cssTarget);
+		CopyFileIfChanged(scriptSource, scriptTarget);
 		CopyFileIfChanged(Path.Combine(baseDirectory, "gold-coins.png"), Path.Combine(paths.Root, "gold-coins.png"));
 		CopyDirectoryIfPresent(Path.Combine(baseDirectory, "Assets"), Path.Combine(paths.Root, "Assets"));
 		CopyDirectoryIfPresent(Path.Combine(baseDirectory, "ThemeAssets"), paths.ThemeAssetsPath);
+		File.WriteAllText(versionStampPath, AppVersion.Current);
+		TryDeleteFile(Path.Combine(paths.Root, "BDOMultiTool.Resources.BDO_Multi_Tool.html"));
+	}
+
+	private static async Task<int> RunOfflineSmokeTestAsync(AppLogger logger)
+	{
+		string testDatabasePath = Path.Combine(Path.GetTempPath(), $"bdo-market-offline-smoke-{Guid.NewGuid():N}.db");
+		try
+		{
+			MarketDatabase database = new(testDatabasePath);
+			await database.InitializeAsync(CancellationToken.None);
+			await database.SaveSettingsAsync(new MarketSettings("eu", 1440), CancellationToken.None);
+
+			MarketItem trackedItem = new(4901, 0, "Test Black Stone Powder", 1, 10_000, 25, 50, 20, 1);
+			await database.AddTrackedItemAsync(trackedItem, "eu", CancellationToken.None);
+			TrackedItem tracked = (await database.GetTrackedItemsAsync("eu", CancellationToken.None)).Single();
+			MarketSnapshot trackedSnapshot = new(10_000, 25, 50, 0, 9_500, 10_500, 10_000, Array.Empty<ProviderHistoryPoint>());
+			await database.SaveSnapshotAsync(tracked, trackedItem, trackedSnapshot, CancellationToken.None);
+			ItemAnalytics? analytics = await database.GetAnalyticsAsync(trackedItem.ItemId, 0, "eu", 30, CancellationToken.None);
+			if (analytics?.CurrentPrice != 10_000)
+			{
+				return 51;
+			}
+
+			MarketItem outfit = new(700_001, 0, "Test Premium Outfit", 4, 2_200_000_000, 0, 123, 55, 1);
+			await database.SyncOutfitCatalogAsync([outfit], "eu", CancellationToken.None);
+			if ((await database.GetOutfitsDueAsync("eu", 10, CancellationToken.None)).Count != 1)
+			{
+				return 52;
+			}
+			MarketSnapshot outfitSnapshot = new(2_200_000_000, 0, 123, 7, 2_100_000_000, 2_200_000_000, 2_150_000_000, Array.Empty<ProviderHistoryPoint>());
+			await database.SaveOutfitDetailAsync(outfit, outfit, outfitSnapshot, "eu", CancellationToken.None);
+			OutfitReport report = await database.GetOutfitReportAsync("eu", CancellationToken.None);
+			return report.CatalogCount == 1 && report.DetailedCount == 1 && report.Opportunities.Count == 1 ? 0 : 53;
+		}
+		catch (Exception exception)
+		{
+			logger.Error("Offline smoke test failed.", exception);
+			return 50;
+		}
+		finally
+		{
+			SqliteCleanup(testDatabasePath);
+		}
+	}
+
+	private static void TryDeleteFile(string path)
+	{
+		try
+		{
+			if (File.Exists(path))
+			{
+				File.Delete(path);
+			}
+		}
+		catch (IOException)
+		{
+		}
+		catch (UnauthorizedAccessException)
+		{
+		}
 	}
 
 	private static void CopyDirectoryIfPresent(string sourceDirectory, string targetDirectory)

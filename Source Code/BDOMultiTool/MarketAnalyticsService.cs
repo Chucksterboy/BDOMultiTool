@@ -9,9 +9,9 @@ namespace BDOMultiTool;
 
 internal sealed class MarketAnalyticsService : IDisposable
 {
-	public const int DefaultOutfitsPerScan = 600;
+	public const int DefaultOutfitsPerScan = 100;
 
-	public static readonly TimeSpan DefaultCollectorInterval = TimeSpan.FromHours(3);
+	public static readonly TimeSpan DefaultCollectorInterval = TimeSpan.FromHours(24);
 
 	private static readonly TimeSpan MarketSampleRetention = TimeSpan.FromDays(180);
 
@@ -28,6 +28,10 @@ internal sealed class MarketAnalyticsService : IDisposable
 	private readonly Semaphore processUpdateLock = new Semaphore(1, 1, "Local\\BDOMultiTool-MarketUpdate");
 
 	private readonly CancellationTokenSource shutdown = new CancellationTokenSource();
+
+	private readonly object reportCacheSync = new();
+
+	private readonly Dictionary<string, (OutfitReport Report, DateTimeOffset CachedUtc)> reportCache = new(StringComparer.OrdinalIgnoreCase);
 
 	private Timer? timer;
 
@@ -53,7 +57,12 @@ internal sealed class MarketAnalyticsService : IDisposable
 	public async Task InitializeAsync(CancellationToken cancellationToken, bool startForegroundUpdates = true)
 	{
 		await database.InitializeAsync(cancellationToken);
-		settings = await database.GetSettingsAsync(cancellationToken);
+		MarketSettings storedSettings = await database.GetSettingsAsync(cancellationToken);
+		settings = storedSettings with { Region = "eu" };
+		if (!string.Equals(storedSettings.Region, "eu", StringComparison.OrdinalIgnoreCase))
+		{
+			await database.SaveSettingsAsync(settings, cancellationToken);
+		}
 		foregroundUpdatesEnabled = startForegroundUpdates;
 		if (!startForegroundUpdates)
 		{
@@ -121,12 +130,39 @@ internal sealed class MarketAnalyticsService : IDisposable
 
 	public Task<OutfitReport> GetOutfitReportAsync(CancellationToken cancellationToken)
 	{
-		return database.GetOutfitReportAsync(settings.Region, cancellationToken);
+		return GetOutfitReportAsync(settings.Region, cancellationToken);
 	}
 
-	public Task<OutfitReport> GetOutfitReportAsync(string region, CancellationToken cancellationToken)
+	public async Task<OutfitReport> GetOutfitReportAsync(string region, CancellationToken cancellationToken)
 	{
-		return database.GetOutfitReportAsync(NormalizeRegion(region), cancellationToken);
+		region = NormalizeRegion(region);
+		lock (reportCacheSync)
+		{
+			if (reportCache.TryGetValue(region, out var cached) && DateTimeOffset.UtcNow - cached.CachedUtc < TimeSpan.FromMinutes(2))
+			{
+				return cached.Report;
+			}
+		}
+
+		OutfitReport report = await database.GetOutfitReportAsync(region, cancellationToken);
+		CacheOutfitReport(region, report);
+		return report;
+	}
+
+	private void CacheOutfitReport(string region, OutfitReport report)
+	{
+		lock (reportCacheSync)
+		{
+			reportCache[NormalizeRegion(region)] = (report, DateTimeOffset.UtcNow);
+		}
+	}
+
+	private void InvalidateOutfitReport(string region)
+	{
+		lock (reportCacheSync)
+		{
+			reportCache.Remove(NormalizeRegion(region));
+		}
 	}
 
 	public async Task SaveSettingsAsync(string region, int intervalMinutes, CancellationToken cancellationToken)
@@ -148,7 +184,7 @@ internal sealed class MarketAnalyticsService : IDisposable
 
 	private static string NormalizeRegion(string region)
 	{
-		return string.Equals(region, "na", StringComparison.OrdinalIgnoreCase) ? "na" : "eu";
+		return "eu";
 	}
 
 	public async Task RefreshAllAsync(CancellationToken cancellationToken)
@@ -167,8 +203,7 @@ internal sealed class MarketAnalyticsService : IDisposable
 				this.StatusChanged?.Invoke(this, "A background market update is already running.");
 				return;
 			}
-			await RefreshRegionAsync("eu", 300, cancellationToken);
-			await RefreshRegionAsync("na", 300, cancellationToken);
+			await RefreshRegionAsync("eu", DefaultOutfitsPerScan, cancellationToken);
 			this.DataChanged?.Invoke(this, EventArgs.Empty);
 		}
 		finally
@@ -220,7 +255,7 @@ internal sealed class MarketAnalyticsService : IDisposable
 				return;
 			}
 			bool refreshedAny = false;
-			foreach (string region in new[] { "eu", "na" })
+			foreach (string region in new[] { "eu" })
 			{
 				DateTimeOffset? latest = await database.GetLatestMarketSampleUtcAsync(region, cancellationToken);
 				bool isDue = !latest.HasValue || DateTimeOffset.UtcNow - latest.Value >= maximumAge;
@@ -230,12 +265,12 @@ internal sealed class MarketAnalyticsService : IDisposable
 					continue;
 				}
 				this.StatusChanged?.Invoke(this, $"{region.ToUpperInvariant()} market samples are due ({reason}). Collecting now...");
-				await RefreshRegionAsync(region, 300, cancellationToken);
+				await RefreshRegionAsync(region, DefaultOutfitsPerScan, cancellationToken);
 				refreshedAny = true;
 			}
 			if (!refreshedAny)
 			{
-				this.StatusChanged?.Invoke(this, "EU and NA market samples are already up to date.");
+				this.StatusChanged?.Invoke(this, "EU market samples are already up to date.");
 			}
 			else
 			{
@@ -260,7 +295,7 @@ internal sealed class MarketAnalyticsService : IDisposable
 	private async Task RefreshOutfitsForAllRegionsAsync(int batchSize, CancellationToken cancellationToken)
 	{
 		int failures = 0;
-		foreach (string region in new[] { "eu", "na" })
+		foreach (string region in new[] { "eu" })
 		{
 			try
 			{
@@ -279,7 +314,7 @@ internal sealed class MarketAnalyticsService : IDisposable
 		}
 		if (failures == 0)
 		{
-			this.StatusChanged?.Invoke(this, "EU and NA outfit sample scans are up to date.");
+			this.StatusChanged?.Invoke(this, "EU outfit samples are up to date.");
 		}
 	}
 
@@ -332,8 +367,10 @@ internal sealed class MarketAnalyticsService : IDisposable
 	{
 		this.StatusChanged?.Invoke(this, $"Syncing {region.ToUpperInvariant()} outfit samples...");
 		await SyncOutfitCatalogAsync(region, cancellationToken);
-		IReadOnlyList<MarketItem> readOnlyList = await database.GetOutfitsDueAsync(region, batchSize, cancellationToken);
+		IReadOnlyList<MarketItem> readOnlyList = await database.GetOutfitsDueAsync(region, Math.Clamp(batchSize, 1, DefaultOutfitsPerScan), cancellationToken);
 		int completed = 0;
+		int failures = 0;
+		int consecutiveFailures = 0;
 		foreach (MarketItem item in readOnlyList)
 		{
 			try
@@ -343,7 +380,8 @@ internal sealed class MarketAnalyticsService : IDisposable
 				MarketSnapshot snapshot = await provider.GetSnapshotAsync(item.ItemId, variant.Enhancement, region, cancellationToken);
 				await database.SaveOutfitDetailAsync(item, variant, snapshot, region, cancellationToken);
 				completed++;
-				await Task.Delay(150, cancellationToken);
+				consecutiveFailures = 0;
+				await Task.Delay(100, cancellationToken);
 			}
 			catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 			{
@@ -351,11 +389,18 @@ internal sealed class MarketAnalyticsService : IDisposable
 			}
 			catch (Exception exception)
 			{
-				logger.Error($"Could not enrich {region.ToUpperInvariant()} outfit {item.ItemId} ({item.Name}).", exception);
+				failures++;
+				consecutiveFailures++;
+				if (consecutiveFailures >= 3)
+				{
+					logger.Warn($"{region.ToUpperInvariant()} outfit scan paused after {consecutiveFailures} consecutive provider failures. Cached data remains available. Last error: {exception.Message}");
+					break;
+				}
 			}
 		}
 		OutfitReport outfitReport = await database.GetOutfitReportAsync(region, cancellationToken);
-		this.StatusChanged?.Invoke(this, $"{region.ToUpperInvariant()} outfit scan updated {completed} item(s). Coverage: {outfitReport.DetailedCount:N0}/{outfitReport.CatalogCount:N0}.");
+		CacheOutfitReport(region, outfitReport);
+		this.StatusChanged?.Invoke(this, $"{region.ToUpperInvariant()} outfit scan updated {completed} item(s), {failures} failed. Coverage: {outfitReport.DetailedCount:N0}/{outfitReport.CatalogCount:N0}.");
 	}
 
 	private async Task SyncOutfitCatalogAsync(string region, CancellationToken cancellationToken)
@@ -364,6 +409,7 @@ internal sealed class MarketAnalyticsService : IDisposable
 			group x by x.ItemId into x
 			select x.First()).ToArray();
 		await database.SyncOutfitCatalogAsync(catalog, region, cancellationToken);
+		InvalidateOutfitReport(region);
 		this.StatusChanged?.Invoke(this, $"{catalog.Length:N0} outfits loaded for {region.ToUpperInvariant()}.");
 		this.DataChanged?.Invoke(this, EventArgs.Empty);
 	}

@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Net;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,10 +15,16 @@ namespace BDOMultiTool;
 internal sealed class BlackDesertMarketProvider : IMarketDataProvider, IDisposable
 {
 	private const string BaseUrl = "https://api.blackdesertmarket.com";
+	private const int MaxAttempts = 2;
+	private const int CircuitFailureThreshold = 3;
+	private static readonly TimeSpan CircuitBreakDuration = TimeSpan.FromMinutes(10);
 
 	private readonly HttpClient client;
 
 	private readonly AppLogger logger;
+	private readonly object circuitSync = new();
+	private int consecutiveFailures;
+	private DateTimeOffset circuitOpenUntilUtc;
 
 	public string Name => "Black Desert Market API";
 
@@ -97,8 +104,9 @@ internal sealed class BlackDesertMarketProvider : IMarketDataProvider, IDisposab
 
 	private async Task<JsonDocument> GetJsonWithRetryAsync(string url, CancellationToken cancellationToken)
 	{
-		Exception lastError = null;
-		for (int attempt = 1; attempt <= 3; attempt++)
+		ThrowIfCircuitOpen();
+		Exception? lastError = null;
+		for (int attempt = 1; attempt <= MaxAttempts; attempt++)
 		{
 			try
 			{
@@ -106,7 +114,7 @@ internal sealed class BlackDesertMarketProvider : IMarketDataProvider, IDisposab
 				string json = await response.Content.ReadAsStringAsync(cancellationToken);
 				if (!response.IsSuccessStatusCode)
 				{
-					throw new HttpRequestException($"Market provider returned {response.StatusCode} {response.ReasonPhrase}.");
+					throw new HttpRequestException($"Market provider returned {response.StatusCode} {response.ReasonPhrase}.", null, response.StatusCode);
 				}
 				JsonDocument jsonDocument = JsonDocument.Parse(json);
 				if (!jsonDocument.RootElement.TryGetProperty("code", out var value) || !string.Equals(value.GetString(), "SUCCESS", StringComparison.OrdinalIgnoreCase))
@@ -114,19 +122,70 @@ internal sealed class BlackDesertMarketProvider : IMarketDataProvider, IDisposab
 					jsonDocument.Dispose();
 					throw new InvalidDataException("Market provider returned an unsuccessful response.");
 				}
+				RegisterSuccess();
 				return jsonDocument;
 			}
-			catch (Exception ex) when (((ex is HttpRequestException || ex is TaskCanceledException || ex is JsonException || ex is InvalidDataException) ? 1 : 0) != 0)
+			catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or InvalidDataException)
 			{
-				lastError = ex;
-				logger.Warn($"Provider request attempt {attempt} failed: {ex.Message}");
-				if (attempt < 3)
+				if (ex is OperationCanceledException && cancellationToken.IsCancellationRequested)
 				{
-					await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2.0, attempt)), cancellationToken);
+					throw;
+				}
+				lastError = ex;
+				bool serverFailure = ex is HttpRequestException { StatusCode: >= HttpStatusCode.InternalServerError };
+				if (serverFailure || attempt >= MaxAttempts)
+				{
+					break;
+				}
+				if (attempt < MaxAttempts)
+				{
+					await Task.Delay(TimeSpan.FromSeconds(attempt), cancellationToken);
 				}
 			}
 		}
-		throw new HttpRequestException("The market provider could not be reached after three attempts.", lastError);
+
+		RegisterFailure(lastError);
+		throw new HttpRequestException("The market provider is temporarily unavailable. Cached data will continue to be used.", lastError);
+	}
+
+	private void ThrowIfCircuitOpen()
+	{
+		lock (circuitSync)
+		{
+			if (circuitOpenUntilUtc > DateTimeOffset.UtcNow)
+			{
+				throw new HttpRequestException($"Market provider circuit is paused until {circuitOpenUntilUtc.LocalDateTime:t}.");
+			}
+			if (circuitOpenUntilUtc != default)
+			{
+				circuitOpenUntilUtc = default;
+				consecutiveFailures = 0;
+			}
+		}
+	}
+
+	private void RegisterSuccess()
+	{
+		lock (circuitSync)
+		{
+			consecutiveFailures = 0;
+			circuitOpenUntilUtc = default;
+		}
+	}
+
+	private void RegisterFailure(Exception? error)
+	{
+		lock (circuitSync)
+		{
+			consecutiveFailures++;
+			if (consecutiveFailures < CircuitFailureThreshold)
+			{
+				return;
+			}
+
+			circuitOpenUntilUtc = DateTimeOffset.UtcNow.Add(CircuitBreakDuration);
+			logger.Warn($"Market provider circuit opened for {CircuitBreakDuration.TotalMinutes:N0} minutes after {consecutiveFailures} failed requests. Last error: {error?.Message}");
+		}
 	}
 
 	private static IReadOnlyList<MarketItem> ParseItems(JsonElement data, bool includeEnhancement)
@@ -150,10 +209,6 @@ internal sealed class BlackDesertMarketProvider : IMarketDataProvider, IDisposab
 
 	private static string ValidateRegion(string region)
 	{
-		if (!string.Equals(region, "eu", StringComparison.OrdinalIgnoreCase))
-		{
-			return "na";
-		}
 		return "eu";
 	}
 

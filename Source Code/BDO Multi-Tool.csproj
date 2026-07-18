@@ -24,8 +24,9 @@
     <None Include="Assets\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Include="ThemeAssets\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Include="BDOMultiTool.Resources.BDO_Multi_Tool.html" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="BDOMultiTool.Resources.BDO_Multi_Tool.css" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="BDOMultiTool.Resources.BDO_Multi_Tool.js" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Include="BDOMultiTool.Resources.gold-coins.png" Link="gold-coins.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <EmbeddedResource Include="BDOMultiTool.Resources.BDO_Multi_Tool.html" LogicalName="BDOMultiTool.Resources.BDO_Multi_Tool.html" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
