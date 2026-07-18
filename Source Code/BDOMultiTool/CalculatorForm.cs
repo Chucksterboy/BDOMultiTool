@@ -811,6 +811,8 @@ internal sealed class CalculatorForm : Form
 			return await LoadEventsWithBrowserFallbackAsync(forceRefresh: false, cancellationToken);
 		case "refreshEvents":
 			return await LoadEventsWithBrowserFallbackAsync(forceRefresh: true, cancellationToken);
+		case "getAppVersion":
+			return new { version = AppVersion.Current };
 		case "checkForUpdates":
 			return await updateCheckerService.CheckAsync(cancellationToken);
 		case "downloadAndInstallUpdate":
@@ -1260,6 +1262,7 @@ internal sealed class CalculatorForm : Form
 			"payment.naeu.playblackdesert.com",
 			"www.naeu.playblackdesert.com",
 			"blackdesert.pearlabyss.com",
+			"www.patreon.com",
 			"github.com"
 		];
 		return allowedHosts.Any(x => x.Equals(host, StringComparison.OrdinalIgnoreCase));
