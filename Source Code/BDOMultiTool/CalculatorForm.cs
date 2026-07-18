@@ -1262,7 +1262,7 @@ internal sealed class CalculatorForm : Form
 			"payment.naeu.playblackdesert.com",
 			"www.naeu.playblackdesert.com",
 			"blackdesert.pearlabyss.com",
-			"www.patreon.com",
+			"ko-fi.com",
 			"github.com"
 		];
 		return allowedHosts.Any(x => x.Equals(host, StringComparison.OrdinalIgnoreCase));

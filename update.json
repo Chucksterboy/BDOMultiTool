@@ -1,6 +1,6 @@
 ﻿{
-    "version":  "v0.9.9",
+    "version":  "v0.9.10",
     "releaseUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest",
     "downloadUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest/download/BDO-Multi-Tool-Installer.exe",
-    "notes":  "Adds a refined pulsating Support Me heart in the application footer, links it securely to Patreon.com/Chucksterboy, replaces theme status text with the live application version, and removes the temporary Discord badge."
+    "notes":  "Corrects the Support Me destination to ko-fi.com/chucksterboy while retaining the refined pulsating heart, live footer version badge, and secure external-link allowlist."
 }
