@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 
-<link rel="stylesheet" href="BDOMultiTool.Resources.BDO_Multi_Tool.css?v=v0.9.14">
+<link rel="stylesheet" href="BDOMultiTool.Resources.BDO_Multi_Tool.css?v=v0.9.15">
 </head>
 
 <body data-mode="dark" data-theme="ocean" data-background="aurora" data-style="fantasy">
@@ -60,11 +60,11 @@
     </header>
 
     <section class="homeTimerGrid" aria-label="Dashboard timers">
-      <article class="homeTimerCard"><div class="homeTimerTop"><span id="homeNextBossTitle" class="homeTimerTitle">Next Boss</span><span class="homeTimerIcon">â™›</span></div><strong id="homeNextBossTime" class="homeTimerValue">--:--:--</strong><div id="homeNextBossSub" class="homeTimerSub">Calculating next spawn...</div></article>
-      <article class="homeTimerCard"><div class="homeTimerTop"><span class="homeTimerTitle">Day / Night</span><span class="homeTimerIcon">â˜¾</span></div><strong id="homeDayNightValue" class="homeTimerValue">--</strong><div id="homeDayNightSub" class="homeTimerSub">Cycle loading...</div><div class="homeProgress"><span id="homeDayNightProgress"></span></div></article>
-      <article class="homeTimerCard"><div class="homeTimerTop"><span class="homeTimerTitle">Guild Boss Timer</span><span class="homeTimerIcon">â—‡</span></div><strong id="homeGuildBossValue" class="homeTimerValue">--:--:--</strong><div id="homeGuildBossSub" class="homeTimerSub">Set a guild boss time</div></article>
-      <article class="homeTimerCard"><div class="homeTimerTop"><span class="homeTimerTitle">Guild Bosses</span><span class="homeTimerIcon">âš‘</span></div><div class="homeGuildInputWrap"><select id="homeGuildBossDay" class="homeGuildInput" aria-label="Guild boss weekday"><option value="">Choose day</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="0">Sunday</option></select><input id="homeGuildBossTime" class="homeGuildInput" type="time" aria-label="Guild boss time"><div id="homeGuildBossSetSub" class="homeTimerSub">Choose the weekly day and time</div></div></article>
-      <article class="homeTimerCard"><div class="homeTimerTop"><span class="homeTimerTitle">BDO Links</span><span class="homeTimerIcon">â†—</span></div><div class="homeLinkStack"><button class="homeExternalLink" data-open-url="https://www.naeu.playblackdesert.com/en-US/News/Notice?boardType=2">Live Updates</button><button class="homeExternalLink" data-open-url="https://blackdesert.pearlabyss.com/GlobalLab/en-us/News/Notice?_categoryNo=2">Global Labs</button></div></article>
+      <article class="homeTimerCard"><div class="homeTimerTop"><span id="homeNextBossTitle" class="homeTimerTitle">Next Boss</span><span class="homeTimerIcon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m2 4 3 12h14l3-12-6 7-4-7-4 7-6-7Z"></path><path d="M5 20h14"></path></svg></span></div><strong id="homeNextBossTime" class="homeTimerValue">--:--:--</strong><div id="homeNextBossSub" class="homeTimerSub">Calculating next spawn...</div></article>
+      <article class="homeTimerCard"><div class="homeTimerTop"><span class="homeTimerTitle">Day / Night</span><span class="homeTimerIcon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path></svg></span></div><strong id="homeDayNightValue" class="homeTimerValue">--</strong><div id="homeDayNightSub" class="homeTimerSub">Cycle loading...</div><div class="homeProgress"><span id="homeDayNightProgress"></span></div></article>
+      <article class="homeTimerCard"><div class="homeTimerTop"><span class="homeTimerTitle">Guild Boss Timer</span><span class="homeTimerIcon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></span></div><strong id="homeGuildBossValue" class="homeTimerValue">--:--:--</strong><div id="homeGuildBossSub" class="homeTimerSub">Set a guild boss time</div></article>
+      <article class="homeTimerCard"><div class="homeTimerTop"><span class="homeTimerTitle">Guild Bosses</span><span class="homeTimerIcon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 22V4"></path><path d="M5 4h14l-2 4 2 4H5"></path></svg></span></div><div class="homeGuildInputWrap"><select id="homeGuildBossDay" class="homeGuildInput" aria-label="Guild boss weekday"><option value="">Choose day</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="0">Sunday</option></select><input id="homeGuildBossTime" class="homeGuildInput" type="time" aria-label="Guild boss time"><div id="homeGuildBossSetSub" class="homeTimerSub">Choose the weekly day and time</div></div></article>
+      <article class="homeTimerCard"><div class="homeTimerTop"><span class="homeTimerTitle">BDO Links</span><span class="homeTimerIcon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15 3h6v6"></path><path d="m10 14 11-11"></path><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path></svg></span></div><div class="homeLinkStack"><button class="homeExternalLink" data-open-url="https://www.naeu.playblackdesert.com/en-US/News/Notice?boardType=2">Live Updates</button><button class="homeExternalLink" data-open-url="https://blackdesert.pearlabyss.com/GlobalLab/en-us/News/Notice?_categoryNo=2">Global Labs</button></div></article>
     </section>
 
     <section class="homeMainGrid">
@@ -963,11 +963,14 @@
   <span class="statusRight"><span id="couponStatusAlert" class="couponStatusAlert"></span><span id="updateStatusAlert" class="updateStatusAlert" role="button" tabindex="0"></span><span id="appVersionLabel" class="appVersionLabel" title="Application version">v...</span></span>
 </footer>
 
-<script src="Assets/GrindTracker/grind-spots.js?v=v0.9.14"></script>
-<script src="BDOMultiTool.Resources.BDO_Multi_Tool.js?v=v0.9.14"></script>
+<script src="Assets/GrindTracker/grind-spots.js?v=v0.9.15"></script>
+<script src="BDOMultiTool.Resources.BDO_Multi_Tool.js?v=v0.9.15"></script>
 
 </body>
 </html>
+
+
+
 
 
 

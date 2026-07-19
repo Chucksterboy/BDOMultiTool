@@ -1,7 +1,7 @@
 ﻿{
-    "version":  "v0.9.14",
+    "version":  "v0.9.15",
     "releaseUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest",
-    "downloadUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/download/v0.9.14/BDO-Multi-Tool-Installer.exe",
-    "sha256":  "208F0F35776B176A46C110A70B59B1042592555F1314DC69CAC60250DE28985B",
-    "notes":  "Adds a vibrant Support Me label beside the pulsing Ko-fi heart and strengthens UI asset cache busting so updates render immediately."
+    "downloadUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/download/v0.9.15/BDO-Multi-Tool-Installer.exe",
+    "sha256":  "D30D8F96ABFC4C44455ED2214172ABBEDB3B027DB1D4BD93406910C119DD7F28",
+    "notes":  "Replaces corrupted and placeholder dashboard timer badges with crisp, centered SVG icons across Home and Reset Timers, with regression coverage for all eleven badges."
 }

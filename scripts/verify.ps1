@@ -35,6 +35,11 @@ $script = Get-Content -LiteralPath $scriptPath -Raw
 if ($html -notmatch 'BDOMultiTool\.Resources\.BDO_Multi_Tool\.css' -or $html -notmatch 'BDOMultiTool\.Resources\.BDO_Multi_Tool\.js') {
 	throw "The HTML shell does not reference the external UI assets."
 }
+$homeTimerIconCount = [regex]::Matches($html, 'class="homeTimerIcon"[^>]*>\s*<svg\b').Count
+$resetTimerIconCount = [regex]::Matches($script, '(?m)^\s{2}(?:daily|imperial|bsa|agris|barter|trading):''<svg\b').Count
+if ($homeTimerIconCount -ne 5 -or $resetTimerIconCount -ne 6 -or $script -match 'icon:\s*"\?"') {
+	throw "Dashboard timer badges are missing, malformed, or using placeholder glyphs."
+}
 if ($html.Length -gt 100000) { throw "The HTML shell exceeded the 100 KB performance budget." }
 if ($script.Length -gt 500000) { throw "The main UI script exceeded the 500 KB performance budget." }
 if ($css -notmatch 'body\[data-motion="reduced"\]' -or $script -notmatch 'visibilitychange') {
