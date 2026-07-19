@@ -174,6 +174,11 @@ if (!(Test-Path -LiteralPath $installerExe)) {
 }
 Copy-Item -LiteralPath $installerExe -Destination $installerReleaseAsset -Force
 
+$installerSelfTest = Start-Process -FilePath $installerReleaseAsset -ArgumentList "--self-test" -Wait -PassThru
+if ($installerSelfTest.ExitCode -ne 0) {
+	throw "Installer transactional self-test failed with exit code $($installerSelfTest.ExitCode)."
+}
+
 $manifest.sha256 = (Get-FileHash -LiteralPath $installerReleaseAsset -Algorithm SHA256).Hash.ToUpperInvariant()
 $manifest | ConvertTo-Json | Set-Content -LiteralPath $updateManifestFile -Encoding UTF8
 Copy-Item -LiteralPath $updateManifestFile -Destination (Join-Path $sourceRoot "update.json") -Force

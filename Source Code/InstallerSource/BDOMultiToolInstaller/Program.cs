@@ -8,13 +8,20 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security;
 using System.Security.Principal;
+using System.Threading;
 using System.Windows.Forms;
 
 internal static class Program
 {
 	[STAThread]
-	private static void Main()
+	private static void Main(string[] args)
 	{
+		if (args.Any(arg => string.Equals(arg, "--self-test", StringComparison.OrdinalIgnoreCase)))
+		{
+			Environment.ExitCode = InstallerSelfTest.Run();
+			return;
+		}
+
 		ApplicationConfiguration.Initialize();
 		Application.Run(new InstallerForm());
 	}
@@ -119,6 +126,7 @@ internal sealed class InstallerForm : Form
 
 	private void Install()
 	{
+		string stagingPath = null;
 		try
 		{
 			installButton.Enabled = false;
@@ -145,31 +153,27 @@ internal sealed class InstallerForm : Form
 					return;
 				}
 
-				UseWaitCursor = true;
+			}
+
+			UseWaitCursor = true;
+			status.Text = "Preparing application files...";
+			stagingPath = StagePayload();
+			progress.Value = 20;
+
+			if (updating)
+			{
 				status.Text = "Closing running app...";
 				CloseRunningInstalledApp();
-				progress.Value = 15;
-				status.Text = "Updating files...";
-				Directory.Delete(installPath, true);
 			}
-			else
-			{
-				status.Text = "Installing files...";
-				progress.Value = 15;
-			}
-			Directory.CreateDirectory(installPath);
 
-			using Stream payload = Assembly.GetExecutingAssembly().GetManifestResourceStream("Payload.zip")
-				?? throw new InvalidOperationException("Installer payload is missing.");
-			using ZipArchive archive = new ZipArchive(payload, ZipArchiveMode.Read);
-			archive.ExtractToDirectory(installPath, true);
+			status.Text = updating ? "Updating files..." : "Installing files...";
+			ReplaceApplicationFiles(stagingPath, installPath, updating);
+			stagingPath = null;
 			progress.Value = 65;
 
 			string exePath = Path.Combine(installPath, InstallerConfig.ExeName);
 			if (!File.Exists(exePath))
-			{
 				throw new FileNotFoundException("Installed application executable was not found.", exePath);
-			}
 
 			status.Text = "Creating shortcuts...";
 			CreateStartMenuShortcut(exePath, exePath);
@@ -193,42 +197,188 @@ internal sealed class InstallerForm : Form
 				MessageBoxButtons.YesNo,
 				MessageBoxIcon.Information);
 			if (result == DialogResult.Yes)
-			{
 				Process.Start(new ProcessStartInfo(exePath) { UseShellExecute = true });
-			}
 			Close();
 		}
 		catch (Exception ex)
 		{
+			if (!string.IsNullOrWhiteSpace(stagingPath))
+				TryDeleteDirectory(stagingPath);
 			UseWaitCursor = false;
 			installButton.Enabled = true;
 			cancelButton.Enabled = true;
 			status.Text = "Install failed.";
-			MessageBox.Show(ex.Message, InstallerConfig.AppName + " Setup", MessageBoxButtons.OK, MessageBoxIcon.Error);
+			MessageBox.Show(
+				"The application could not be installed safely. No working installation was removed.\r\n\r\n" + ex.Message,
+				InstallerConfig.AppName + " Setup",
+				MessageBoxButtons.OK,
+				MessageBoxIcon.Error);
+		}
+	}
+
+	private string StagePayload()
+	{
+		string parentPath = Directory.GetParent(installPath)?.FullName
+			?? throw new InvalidOperationException("The application install folder is invalid.");
+		Directory.CreateDirectory(parentPath);
+		string stagingPath = Path.Combine(parentPath, $".{InstallerConfig.InstallFolderName}.staging-{Guid.NewGuid():N}");
+		Directory.CreateDirectory(stagingPath);
+		try
+		{
+			using Stream payload = Assembly.GetExecutingAssembly().GetManifestResourceStream("Payload.zip")
+				?? throw new InvalidOperationException("Installer payload is missing.");
+			using ZipArchive archive = new ZipArchive(payload, ZipArchiveMode.Read);
+			archive.ExtractToDirectory(stagingPath, true);
+			string stagedExe = Path.Combine(stagingPath, InstallerConfig.ExeName);
+			if (!File.Exists(stagedExe))
+				throw new FileNotFoundException("Installer payload does not contain the application executable.", stagedExe);
+			return stagingPath;
+		}
+		catch
+		{
+			TryDeleteDirectory(stagingPath);
+			throw;
 		}
 	}
 
 	private void CloseRunningInstalledApp()
 	{
-		string expectedExe = Path.Combine(installPath, InstallerConfig.ExeName);
-		foreach (Process process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(InstallerConfig.ExeName)))
+		string processName = Path.GetFileNameWithoutExtension(InstallerConfig.ExeName);
+		DateTime deadline = DateTime.UtcNow.AddSeconds(12);
+		Exception lastError = null;
+		do
 		{
-			try
+			Process[] processes = Process.GetProcessesByName(processName);
+			if (processes.Length == 0)
+				return;
+
+			foreach (Process process in processes)
 			{
-				string path = process.MainModule?.FileName ?? string.Empty;
-				if (string.Equals(path, expectedExe, StringComparison.OrdinalIgnoreCase))
+				using (process)
 				{
-					process.CloseMainWindow();
-					if (!process.WaitForExit(3000))
+					try
 					{
-						process.Kill(entireProcessTree: true);
-						process.WaitForExit(3000);
+						process.CloseMainWindow();
+						if (!process.WaitForExit(1500))
+						{
+							process.Kill(entireProcessTree: true);
+							if (!process.WaitForExit(5000))
+								throw new InvalidOperationException($"BDO Multi-Tool process {process.Id} did not exit.");
+						}
+					}
+					catch (InvalidOperationException)
+					{
+						// The process exited between enumeration and inspection.
+					}
+					catch (Exception ex)
+					{
+						lastError = ex;
+						try
+						{
+							if (!process.HasExited)
+							{
+								process.Kill(entireProcessTree: true);
+								process.WaitForExit(5000);
+							}
+						}
+						catch (Exception killError)
+						{
+							lastError = killError;
+						}
 					}
 				}
 			}
-			catch
+
+			Thread.Sleep(250);
+		}
+		while (DateTime.UtcNow < deadline);
+
+		throw new InvalidOperationException(
+			"BDO Multi-Tool is still running. Close it from the system tray and try again.",
+			lastError);
+	}
+
+	internal static void ReplaceApplicationFiles(string stagingPath, string targetPath, bool updating)
+	{
+		string backupPath = null;
+		bool existingMoved = false;
+		bool stagedFilesInstalled = false;
+		try
+		{
+			if (updating)
 			{
+				backupPath = targetPath + $".backup-{Guid.NewGuid():N}";
+				RetryFileSystemAction(
+					() => Directory.Move(targetPath, backupPath),
+					"Windows did not release the existing application files in time.");
+				existingMoved = true;
 			}
+
+			RetryFileSystemAction(
+				() => Directory.Move(stagingPath, targetPath),
+				"The prepared application files could not be moved into place.");
+			stagedFilesInstalled = true;
+
+			if (!File.Exists(Path.Combine(targetPath, InstallerConfig.ExeName)))
+				throw new InvalidDataException("The installed application executable is missing after replacement.");
+
+			if (existingMoved && backupPath != null)
+				TryDeleteDirectory(backupPath);
+		}
+		catch
+		{
+			if (stagedFilesInstalled)
+				TryDeleteDirectory(targetPath);
+			if (existingMoved && backupPath != null && Directory.Exists(backupPath) && !Directory.Exists(targetPath))
+			{
+				RetryFileSystemAction(
+					() => Directory.Move(backupPath, targetPath),
+					"The previous application files could not be restored.");
+			}
+			throw;
+		}
+		finally
+		{
+			if (Directory.Exists(stagingPath))
+				TryDeleteDirectory(stagingPath);
+		}
+	}
+
+	internal static void RetryFileSystemAction(Action action, string failureMessage)
+	{
+		Exception lastError = null;
+		for (int attempt = 1; attempt <= 12; attempt++)
+		{
+			try
+			{
+				action();
+				return;
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+			{
+				lastError = ex;
+				if (attempt < 12)
+					Thread.Sleep(500);
+			}
+		}
+
+		throw new IOException(failureMessage, lastError);
+	}
+
+	internal static void TryDeleteDirectory(string path)
+	{
+		if (!Directory.Exists(path))
+			return;
+
+		try
+		{
+			foreach (string file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+				File.SetAttributes(file, FileAttributes.Normal);
+			RetryFileSystemAction(() => Directory.Delete(path, true), "Temporary installer files could not be removed.");
+		}
+		catch
+		{
+			// A stale staging or backup folder is safer than removing a working installation.
 		}
 	}
 
@@ -415,5 +565,135 @@ internal sealed class InstallerForm : Form
 		}
 
 		return MarketCollectorTaskName + " - " + safeUserName;
+	}
+}
+
+internal static class InstallerSelfTest
+{
+	public static int Run()
+	{
+		string root = Path.Combine(Path.GetTempPath(), $"BDOMultiTool-Installer-SelfTest-{Guid.NewGuid():N}");
+		try
+		{
+			Directory.CreateDirectory(root);
+			TestRetryBehavior();
+			TestLockedInstallReplacement(root);
+			TestExistingInstallReplacement(root);
+			TestRollback(root);
+			TestFreshInstall(root);
+			return 0;
+		}
+		catch
+		{
+			return 1;
+		}
+		finally
+		{
+			InstallerForm.TryDeleteDirectory(root);
+		}
+	}
+
+	private static void TestRetryBehavior()
+	{
+		int attempts = 0;
+		InstallerForm.RetryFileSystemAction(() =>
+		{
+			attempts++;
+			if (attempts < 3)
+				throw new UnauthorizedAccessException("Simulated transient file lock.");
+		}, "Retry self-test failed.");
+		if (attempts != 3)
+			throw new InvalidOperationException("The installer retry loop did not recover as expected.");
+	}
+
+	private static void TestExistingInstallReplacement(string root)
+	{
+		string target = Path.Combine(root, "update-target");
+		string staging = Path.Combine(root, "update-staging");
+		Directory.CreateDirectory(target);
+		Directory.CreateDirectory(staging);
+		File.WriteAllText(Path.Combine(target, InstallerConfig.ExeName), "old");
+		File.WriteAllText(Path.Combine(target, "old-only.txt"), "old");
+		File.WriteAllText(Path.Combine(staging, InstallerConfig.ExeName), "new");
+		File.WriteAllText(Path.Combine(staging, "new-only.txt"), "new");
+
+		InstallerForm.ReplaceApplicationFiles(staging, target, updating: true);
+		if (File.ReadAllText(Path.Combine(target, InstallerConfig.ExeName)) != "new"
+			|| File.Exists(Path.Combine(target, "old-only.txt"))
+			|| !File.Exists(Path.Combine(target, "new-only.txt")))
+		{
+			throw new InvalidOperationException("Existing-install replacement self-test failed.");
+		}
+	}
+
+	private static void TestLockedInstallReplacement(string root)
+	{
+		string target = Path.Combine(root, "locked-target");
+		string staging = Path.Combine(root, "locked-staging");
+		Directory.CreateDirectory(target);
+		Directory.CreateDirectory(staging);
+		string lockedExe = Path.Combine(target, InstallerConfig.ExeName);
+		File.WriteAllText(lockedExe, "locked-old-version");
+		File.WriteAllText(Path.Combine(staging, InstallerConfig.ExeName), "replacement");
+
+		FileStream lockStream = new FileStream(lockedExe, FileMode.Open, FileAccess.Read, FileShare.Read);
+		Thread releaseLock = new Thread(() =>
+		{
+			Thread.Sleep(1200);
+			lockStream.Dispose();
+		})
+		{
+			IsBackground = true
+		};
+		releaseLock.Start();
+		try
+		{
+			InstallerForm.ReplaceApplicationFiles(staging, target, updating: true);
+		}
+		finally
+		{
+			lockStream.Dispose();
+			releaseLock.Join(5000);
+		}
+
+		if (File.ReadAllText(Path.Combine(target, InstallerConfig.ExeName)) != "replacement")
+			throw new InvalidOperationException("Locked-file replacement self-test failed.");
+	}
+
+	private static void TestRollback(string root)
+	{
+		string target = Path.Combine(root, "rollback-target");
+		string staging = Path.Combine(root, "rollback-staging");
+		Directory.CreateDirectory(target);
+		Directory.CreateDirectory(staging);
+		File.WriteAllText(Path.Combine(target, InstallerConfig.ExeName), "working-old-version");
+		File.WriteAllText(Path.Combine(staging, "incomplete.txt"), "missing executable");
+
+		try
+		{
+			InstallerForm.ReplaceApplicationFiles(staging, target, updating: true);
+			throw new InvalidOperationException("Rollback self-test did not reject an incomplete payload.");
+		}
+		catch (InvalidDataException)
+		{
+		}
+
+		if (!File.Exists(Path.Combine(target, InstallerConfig.ExeName))
+			|| File.ReadAllText(Path.Combine(target, InstallerConfig.ExeName)) != "working-old-version")
+		{
+			throw new InvalidOperationException("Rollback self-test did not restore the working installation.");
+		}
+	}
+
+	private static void TestFreshInstall(string root)
+	{
+		string target = Path.Combine(root, "fresh-target");
+		string staging = Path.Combine(root, "fresh-staging");
+		Directory.CreateDirectory(staging);
+		File.WriteAllText(Path.Combine(staging, InstallerConfig.ExeName), "fresh");
+
+		InstallerForm.ReplaceApplicationFiles(staging, target, updating: false);
+		if (!File.Exists(Path.Combine(target, InstallerConfig.ExeName)))
+			throw new InvalidOperationException("Fresh-install self-test failed.");
 	}
 }

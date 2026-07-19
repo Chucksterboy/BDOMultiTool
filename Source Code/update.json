@@ -1,7 +1,7 @@
 ﻿{
-    "version":  "v0.9.11",
+    "version":  "v0.9.12",
     "releaseUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest",
-    "downloadUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/download/v0.9.11/BDO-Multi-Tool-Installer.exe",
-    "sha256":  "16AA2F789056F08AFF7CCC3D754CEEB02CF86188ADC417F369BBDC9F0830CEC1",
-    "notes":  "Adds a hardened one-click updater that downloads the exact versioned installer, verifies its size and SHA-256 integrity, launches it immediately, and closes the running app for a smooth update. GitHub fallback selection now targets the correct Windows installer asset, and release publishing avoids serving a previous installer during rollout."
+    "downloadUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/download/v0.9.12/BDO-Multi-Tool-Installer.exe",
+    "sha256":  "6E2661A476C6271C94B9A8AFF4061323BD17028E35D6A90148F8D884F2E3F0D1",
+    "notes":  "Fixes the v0.9.11 installer access-denied failure. Update launches now force a real application exit even when minimize-to-tray is enabled. The installer stages files before shutdown, waits and retries transient executable locks, swaps installations transactionally, and restores the previous working version if replacement validation fails. Release packaging now runs locked-file, rollback, update, and fresh-install self-tests before publication."
 }

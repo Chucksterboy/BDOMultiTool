@@ -1256,7 +1256,12 @@ internal sealed class CalculatorForm : Form
 		{
 			UseShellExecute = true
 		});
-		BeginInvoke(new Action(Close));
+		BeginInvoke(new Action(() =>
+		{
+			forceCloseFromTray = true;
+			TrySetTrayVisible(false);
+			Close();
+		}));
 
 		return new
 		{
