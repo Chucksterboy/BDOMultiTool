@@ -1252,15 +1252,21 @@ internal sealed class CalculatorForm : Form
 			throw;
 		}
 
-		Process.Start(new ProcessStartInfo(installerPath)
+		ProcessStartInfo installerStart = new ProcessStartInfo(installerPath)
 		{
-			UseShellExecute = true
-		});
+			UseShellExecute = true,
+			WorkingDirectory = directory
+		};
+		installerStart.ArgumentList.Add("--install-path");
+		installerStart.ArgumentList.Add(AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+		installerStart.ArgumentList.Add("--source-pid");
+		installerStart.ArgumentList.Add(Environment.ProcessId.ToString());
+		Process.Start(installerStart);
 		BeginInvoke(new Action(() =>
 		{
 			forceCloseFromTray = true;
 			TrySetTrayVisible(false);
-			Close();
+			Application.Exit();
 		}));
 
 		return new

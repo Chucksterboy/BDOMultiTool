@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -16,6 +17,7 @@ internal static class Program
 	[STAThread]
 	private static void Main(string[] args)
 	{
+		SetSafeWorkingDirectory();
 		if (args.Any(arg => string.Equals(arg, "--self-test", StringComparison.OrdinalIgnoreCase)))
 		{
 			Environment.ExitCode = InstallerSelfTest.Run();
@@ -23,7 +25,15 @@ internal static class Program
 		}
 
 		ApplicationConfiguration.Initialize();
-		Application.Run(new InstallerForm());
+		Application.Run(new InstallerForm(args));
+	}
+
+	internal static void SetSafeWorkingDirectory()
+	{
+		string processPath = Environment.ProcessPath ?? string.Empty;
+		string safeDirectory = Path.GetDirectoryName(processPath) ?? Path.GetTempPath();
+		if (Directory.Exists(safeDirectory))
+			Environment.CurrentDirectory = safeDirectory;
 	}
 }
 
@@ -36,13 +46,14 @@ internal sealed class InstallerForm : Form
 	private readonly Button cancelButton;
 	private readonly ProgressBar progress;
 	private readonly Label status;
-	private readonly string installPath = Path.Combine(
-		Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-		"Programs",
-		InstallerConfig.InstallFolderName);
+	private readonly string installPath;
+	private readonly int? sourceProcessId;
 
-	public InstallerForm()
+	public InstallerForm(string[] args)
 	{
+		InstallTarget target = ResolveInstallTarget(args);
+		installPath = target.Path;
+		sourceProcessId = target.SourceProcessId;
 		Text = InstallerConfig.AppName + " Setup";
 		StartPosition = FormStartPosition.CenterScreen;
 		FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -122,6 +133,33 @@ internal sealed class InstallerForm : Form
 		cancelButton.Click += (_, _) => Close();
 
 		Controls.AddRange(new Control[] { title, body, path, desktopShortcut, progress, status, installButton, cancelButton });
+	}
+
+	protected override void OnShown(EventArgs e)
+	{
+		base.OnShown(e);
+		if (!Directory.Exists(installPath))
+			return;
+
+		BeginInvoke(new Action(() =>
+		{
+			try
+			{
+				UseWaitCursor = true;
+				status.Text = "Closing running application...";
+				CloseRunningInstalledApp();
+				status.Text = "Ready to update.";
+			}
+			catch (Exception ex)
+			{
+				status.Text = "Close BDO Multi-Tool and try again.";
+				MessageBox.Show(ex.Message, InstallerConfig.AppName + " Setup", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+			}
+			finally
+			{
+				UseWaitCursor = false;
+			}
+		}));
 	}
 
 	private void Install()
@@ -243,12 +281,11 @@ internal sealed class InstallerForm : Form
 
 	private void CloseRunningInstalledApp()
 	{
-		string processName = Path.GetFileNameWithoutExtension(InstallerConfig.ExeName);
 		DateTime deadline = DateTime.UtcNow.AddSeconds(12);
 		Exception lastError = null;
 		do
 		{
-			Process[] processes = Process.GetProcessesByName(processName);
+			Process[] processes = GetTargetProcesses();
 			if (processes.Length == 0)
 				return;
 
@@ -294,8 +331,98 @@ internal sealed class InstallerForm : Form
 		while (DateTime.UtcNow < deadline);
 
 		throw new InvalidOperationException(
-			"BDO Multi-Tool is still running. Close it from the system tray and try again.",
+			"The BDO Multi-Tool instance being updated is still running. Close it from the system tray and try again.",
 			lastError);
+	}
+
+	private Process[] GetTargetProcesses()
+	{
+		string processName = Path.GetFileNameWithoutExtension(InstallerConfig.ExeName);
+		string targetExe = Path.GetFullPath(Path.Combine(installPath, InstallerConfig.ExeName));
+		List<Process> targets = new List<Process>();
+		foreach (Process process in Process.GetProcessesByName(processName))
+		{
+			bool isTarget = sourceProcessId.HasValue && process.Id == sourceProcessId.Value;
+			if (!isTarget)
+			{
+				try
+				{
+					string processPath = process.MainModule?.FileName ?? string.Empty;
+					isTarget = string.Equals(Path.GetFullPath(processPath), targetExe, StringComparison.OrdinalIgnoreCase);
+				}
+				catch
+				{
+				}
+			}
+
+			if (isTarget)
+				targets.Add(process);
+			else
+				process.Dispose();
+		}
+		return targets.ToArray();
+	}
+
+	private static InstallTarget ResolveInstallTarget(string[] args)
+	{
+		string defaultPath = Path.Combine(
+			Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+			"Programs",
+			InstallerConfig.InstallFolderName);
+		int? requestedProcessId = TryReadIntArgument(args, "--source-pid");
+		string requestedPath = TryReadStringArgument(args, "--install-path");
+		if (!string.IsNullOrWhiteSpace(requestedPath))
+		{
+			string fullPath = Path.GetFullPath(requestedPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+			if (!string.Equals(fullPath, Path.GetFullPath(defaultPath), StringComparison.OrdinalIgnoreCase)
+				&& !File.Exists(Path.Combine(fullPath, InstallerConfig.ExeName)))
+			{
+				throw new InvalidOperationException("The requested update folder does not contain BDO Multi-Tool.");
+			}
+			return new InstallTarget(fullPath, requestedProcessId);
+		}
+
+		List<InstallTarget> candidates = new List<InstallTarget>();
+		int currentSessionId = Process.GetCurrentProcess().SessionId;
+		foreach (Process process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(InstallerConfig.ExeName)))
+		{
+			using (process)
+			{
+				try
+				{
+					if (process.SessionId != currentSessionId)
+						continue;
+					string processPath = process.MainModule?.FileName ?? string.Empty;
+					string directory = Path.GetDirectoryName(processPath) ?? string.Empty;
+					if (!string.IsNullOrWhiteSpace(directory))
+						candidates.Add(new InstallTarget(Path.GetFullPath(directory), process.Id));
+				}
+				catch
+				{
+				}
+			}
+		}
+
+		InstallTarget detected = candidates.FirstOrDefault(candidate =>
+			string.Equals(candidate.Path, Path.GetFullPath(defaultPath), StringComparison.OrdinalIgnoreCase))
+			?? candidates.FirstOrDefault();
+		return detected ?? new InstallTarget(defaultPath, requestedProcessId);
+	}
+
+	private static string TryReadStringArgument(string[] args, string name)
+	{
+		for (int index = 0; index < args.Length - 1; index++)
+		{
+			if (string.Equals(args[index], name, StringComparison.OrdinalIgnoreCase))
+				return args[index + 1];
+		}
+		return string.Empty;
+	}
+
+	private static int? TryReadIntArgument(string[] args, string name)
+	{
+		string value = TryReadStringArgument(args, name);
+		return int.TryParse(value, out int parsed) && parsed > 0 ? parsed : null;
 	}
 
 	internal static void ReplaceApplicationFiles(string stagingPath, string targetPath, bool updating)
@@ -566,6 +693,8 @@ internal sealed class InstallerForm : Form
 
 		return MarketCollectorTaskName + " - " + safeUserName;
 	}
+
+	private sealed record InstallTarget(string Path, int? SourceProcessId);
 }
 
 internal static class InstallerSelfTest
@@ -576,6 +705,7 @@ internal static class InstallerSelfTest
 		try
 		{
 			Directory.CreateDirectory(root);
+			TestInheritedWorkingDirectory(root);
 			TestRetryBehavior();
 			TestLockedInstallReplacement(root);
 			TestExistingInstallReplacement(root);
@@ -591,6 +721,18 @@ internal static class InstallerSelfTest
 		{
 			InstallerForm.TryDeleteDirectory(root);
 		}
+	}
+
+	private static void TestInheritedWorkingDirectory(string root)
+	{
+		string inheritedDirectory = Path.Combine(root, "inherited-working-directory");
+		string movedDirectory = inheritedDirectory + "-moved";
+		Directory.CreateDirectory(inheritedDirectory);
+		Environment.CurrentDirectory = inheritedDirectory;
+		Program.SetSafeWorkingDirectory();
+		Directory.Move(inheritedDirectory, movedDirectory);
+		if (!Directory.Exists(movedDirectory))
+			throw new InvalidOperationException("Working-directory release self-test failed.");
 	}
 
 	private static void TestRetryBehavior()
