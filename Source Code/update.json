@@ -1,7 +1,7 @@
 ﻿{
-    "version":  "v0.9.13",
+    "version":  "v0.9.14",
     "releaseUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest",
-    "downloadUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/download/v0.9.13/BDO-Multi-Tool-Installer.exe",
-    "sha256":  "9902155826269B5B49C4735F5A9C99C3A89316BD75F10B4615307D04C214CDB8",
-    "notes":  "Replaces the v0.9.12 updater hotfix. The installer now releases the working directory inherited from the running app, automatically closes the exact application instance being updated when setup opens, ignores unrelated BDO Multi-Tool copies, and updates the actual source installation path. Future updater launches pass the source path and process ID explicitly. Regression coverage now includes inherited-folder locks alongside locked files, retries, rollback, updates, and fresh installs."
+    "downloadUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/download/v0.9.14/BDO-Multi-Tool-Installer.exe",
+    "sha256":  "208F0F35776B176A46C110A70B59B1042592555F1314DC69CAC60250DE28985B",
+    "notes":  "Adds a vibrant Support Me label beside the pulsing Ko-fi heart and strengthens UI asset cache busting so updates render immediately."
 }

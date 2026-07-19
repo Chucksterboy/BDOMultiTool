@@ -675,7 +675,7 @@ internal sealed class CalculatorForm : Form
 			webView.CoreWebView2.NavigationCompleted += NavigationCompleted;
 			try
 			{
-				webView.CoreWebView2.Navigate($"https://{LocalAppHost}/{Path.GetFileName(paths.HtmlPath)}");
+				webView.CoreWebView2.Navigate($"https://{LocalAppHost}/{Path.GetFileName(paths.HtmlPath)}?v={Uri.EscapeDataString(AppVersion.Current)}");
 				await navigationReady.Task.WaitAsync(TimeSpan.FromSeconds(20), cancellationToken);
 			}
 			finally

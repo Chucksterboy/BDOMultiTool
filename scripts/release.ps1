@@ -103,6 +103,7 @@ $projectFile = Join-Path $sourceRoot "BDO Multi-Tool.csproj"
 $installerProject = Join-Path $sourceRoot "InstallerSource\BDOMultiToolInstaller\BDOMultiToolInstaller.csproj"
 $installerPayload = Join-Path $sourceRoot "InstallerSource\BDOMultiToolInstaller\Payload.zip"
 $appVersionFile = Join-Path $sourceRoot "BDOMultiTool\AppVersion.cs"
+$htmlFile = Join-Path $sourceRoot "BDOMultiTool.Resources.BDO_Multi_Tool.html"
 $assemblyInfoFile = Join-Path $sourceRoot "Properties\AssemblyInfo.cs"
 $updateManifestFile = Join-Path $repoRoot "update.json"
 $artifactRoot = Join-Path $repoRoot "artifacts"
@@ -125,6 +126,9 @@ Replace-Text $appVersionFile 'public const string Current = "v[^"]+";' ('public 
 Replace-Text $assemblyInfoFile 'AssemblyFileVersion\("[^"]+"\)' ('AssemblyFileVersion("' + $assemblyVersion + '")')
 Replace-Text $assemblyInfoFile 'AssemblyInformationalVersion\("[^"]+"\)' ('AssemblyInformationalVersion("' + $versionTag + '")')
 Replace-Text $assemblyInfoFile 'AssemblyVersion\("[^"]+"\)' ('AssemblyVersion("' + $assemblyVersion + '")')
+Replace-Text $htmlFile 'BDOMultiTool\.Resources\.BDO_Multi_Tool\.css(?:\?v=[^"]+)?' ('BDOMultiTool.Resources.BDO_Multi_Tool.css?v=' + $versionTag)
+Replace-Text $htmlFile 'Assets/GrindTracker/grind-spots\.js(?:\?v=[^"]+)?' ('Assets/GrindTracker/grind-spots.js?v=' + $versionTag)
+Replace-Text $htmlFile 'BDOMultiTool\.Resources\.BDO_Multi_Tool\.js(?:\?v=[^"]+)?' ('BDOMultiTool.Resources.BDO_Multi_Tool.js?v=' + $versionTag)
 
 $manifest = [ordered]@{
 	version = $versionTag
