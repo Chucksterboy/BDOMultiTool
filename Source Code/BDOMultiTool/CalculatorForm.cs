@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -1197,24 +1198,59 @@ internal sealed class CalculatorForm : Form
 		string directory = Path.Combine(Path.GetTempPath(), "BDO-Multi-Tool-Updates");
 		Directory.CreateDirectory(directory);
 		string installerPath = Path.Combine(directory, $"BDO-Multi-Tool-Installer-{safeVersion}.exe");
+		string partialInstallerPath = installerPath + ".download";
 
-		using HttpClient client = new()
+		try
 		{
-			Timeout = TimeSpan.FromMinutes(2)
-		};
-		client.DefaultRequestHeaders.UserAgent.ParseAdd("BDO-Multi-Tool/" + AppVersion.Current);
-		using HttpResponseMessage response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-		response.EnsureSuccessStatusCode();
+			File.Delete(partialInstallerPath);
+			using HttpClient client = new()
+			{
+				Timeout = TimeSpan.FromMinutes(2)
+			};
+			client.DefaultRequestHeaders.UserAgent.ParseAdd("BDO-Multi-Tool/" + AppVersion.Current);
+			using HttpResponseMessage response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+			response.EnsureSuccessStatusCode();
+			long? expectedLength = response.Content.Headers.ContentLength;
 
-		await using (Stream input = await response.Content.ReadAsStreamAsync(cancellationToken))
-		await using (FileStream output = new FileStream(installerPath, FileMode.Create, FileAccess.Write, FileShare.None))
-		{
-			await input.CopyToAsync(output, cancellationToken);
+			await using (Stream input = await response.Content.ReadAsStreamAsync(cancellationToken))
+			await using (FileStream output = new FileStream(
+				partialInstallerPath,
+				FileMode.Create,
+				FileAccess.Write,
+				FileShare.None,
+				81920,
+				FileOptions.Asynchronous | FileOptions.SequentialScan))
+			{
+				await input.CopyToAsync(output, cancellationToken);
+			}
+
+			FileInfo downloaded = new FileInfo(partialInstallerPath);
+			if (!downloaded.Exists || downloaded.Length < 128 * 1024)
+				throw new InvalidOperationException("Downloaded installer was incomplete.");
+			if (expectedLength.HasValue && downloaded.Length != expectedLength.Value)
+				throw new InvalidOperationException("Downloaded installer size did not match the release asset.");
+
+			if (!string.IsNullOrWhiteSpace(update.Sha256))
+			{
+				await using FileStream verificationStream = new FileStream(
+					partialInstallerPath,
+					FileMode.Open,
+					FileAccess.Read,
+					FileShare.Read,
+					81920,
+					FileOptions.Asynchronous | FileOptions.SequentialScan);
+				string actualSha256 = Convert.ToHexString(await SHA256.HashDataAsync(verificationStream, cancellationToken));
+				if (!string.Equals(actualSha256, update.Sha256, StringComparison.OrdinalIgnoreCase))
+					throw new InvalidOperationException("Downloaded installer failed its SHA-256 integrity check.");
+			}
+
+			File.Move(partialInstallerPath, installerPath, overwrite: true);
 		}
-
-		FileInfo downloaded = new FileInfo(installerPath);
-		if (!downloaded.Exists || downloaded.Length < 128 * 1024)
-			throw new InvalidOperationException("Downloaded installer was incomplete.");
+		catch
+		{
+			File.Delete(partialInstallerPath);
+			throw;
+		}
 
 		Process.Start(new ProcessStartInfo(installerPath)
 		{
@@ -1226,7 +1262,8 @@ internal sealed class CalculatorForm : Form
 		{
 			started = true,
 			latestVersion = update.LatestVersion,
-			installerPath
+			installerPath,
+			integrityVerified = !string.IsNullOrWhiteSpace(update.Sha256)
 		};
 	}
 

@@ -4,7 +4,7 @@ Desktop helper app for Black Desert Online.
 
 ## Updates
 
-The app checks `update.json` on startup. When `update.json` reports a version newer than the local app version, the app shows a clickable update badge in the bottom-right status bar.
+The app checks `update.json` on startup. When `update.json` reports a version newer than the local app version, the app shows a clickable update badge in the bottom-right status bar. One click downloads the version-pinned installer, verifies its SHA-256 hash, launches it, and closes the running app so the update can proceed.
 
 Current public manifest:
 

@@ -10,6 +10,7 @@ namespace BDOMultiTool;
 
 internal sealed class UpdateCheckerService : IDisposable
 {
+	private const string InstallerAssetName = "BDO-Multi-Tool-Installer.exe";
 	private static readonly JsonSerializerOptions ManifestJsonOptions = new()
 	{
 		PropertyNameCaseInsensitive = true
@@ -42,7 +43,8 @@ internal sealed class UpdateCheckerService : IDisposable
 			Url: AppVersion.ReleasesUrl,
 			RepositoryUrl: AppVersion.RepositoryUrl,
 			Message: "Could not check for updates right now.",
-			CheckFailed: true);
+			CheckFailed: true,
+			Sha256: null);
 	}
 
 	private async Task<UpdateCheckResult?> TryCheckManifestAsync(CancellationToken cancellationToken)
@@ -67,7 +69,8 @@ internal sealed class UpdateCheckerService : IDisposable
 				url,
 				AppVersion.RepositoryUrl,
 				updateAvailable ? $"New update {latest} is available" : "You are on the latest version.",
-				CheckFailed: false);
+				CheckFailed: false,
+				Sha256: NormalizeSha256(manifest.Sha256));
 		}
 		catch (Exception ex)
 		{
@@ -89,11 +92,33 @@ internal sealed class UpdateCheckerService : IDisposable
 			string latest = NormalizeVersion(root.TryGetProperty("tag_name", out JsonElement tagValue) ? tagValue.GetString() ?? AppVersion.Current : AppVersion.Current);
 			string htmlUrl = root.TryGetProperty("html_url", out JsonElement htmlValue) ? htmlValue.GetString() ?? AppVersion.ReleasesUrl : AppVersion.ReleasesUrl;
 			string downloadUrl = htmlUrl;
+			string? sha256 = null;
 			if (root.TryGetProperty("assets", out JsonElement assets) && assets.ValueKind == JsonValueKind.Array)
 			{
-				JsonElement? firstAsset = assets.EnumerateArray().FirstOrDefault();
-				if (firstAsset.HasValue && firstAsset.Value.TryGetProperty("browser_download_url", out JsonElement assetValue))
-					downloadUrl = assetValue.GetString() ?? htmlUrl;
+				JsonElement? installerAsset = null;
+				JsonElement? executableAsset = null;
+				foreach (JsonElement asset in assets.EnumerateArray())
+				{
+					string name = asset.TryGetProperty("name", out JsonElement nameValue) ? nameValue.GetString() ?? string.Empty : string.Empty;
+					if (string.Equals(name, InstallerAssetName, StringComparison.OrdinalIgnoreCase))
+					{
+						installerAsset = asset;
+						break;
+					}
+
+					if (!executableAsset.HasValue && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+						executableAsset = asset;
+				}
+
+				installerAsset ??= executableAsset;
+				if (installerAsset.HasValue)
+				{
+					JsonElement asset = installerAsset.Value;
+					if (asset.TryGetProperty("browser_download_url", out JsonElement assetValue))
+						downloadUrl = assetValue.GetString() ?? htmlUrl;
+					if (asset.TryGetProperty("digest", out JsonElement digestValue))
+						sha256 = NormalizeSha256(digestValue.GetString());
+				}
 			}
 
 			bool updateAvailable = IsNewerVersion(latest, AppVersion.Current);
@@ -104,7 +129,8 @@ internal sealed class UpdateCheckerService : IDisposable
 				downloadUrl,
 				AppVersion.RepositoryUrl,
 				updateAvailable ? $"New update {latest} is available" : "You are on the latest version.",
-				CheckFailed: false);
+				CheckFailed: false,
+				Sha256: sha256);
 		}
 		catch (Exception ex)
 		{
@@ -138,9 +164,19 @@ internal sealed class UpdateCheckerService : IDisposable
 		return values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? AppVersion.ReleasesUrl;
 	}
 
+	private static string? NormalizeSha256(string? value)
+	{
+		string clean = (value ?? string.Empty).Trim();
+		if (clean.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+			clean = clean[7..];
+		if (clean.Length != 64 || clean.Any(ch => !Uri.IsHexDigit(ch)))
+			return null;
+		return clean.ToUpperInvariant();
+	}
+
 	public void Dispose() => http.Dispose();
 
-	private sealed record UpdateManifest(string Version, string? ReleaseUrl, string? DownloadUrl);
+	private sealed record UpdateManifest(string Version, string? ReleaseUrl, string? DownloadUrl, string? Sha256);
 }
 
 internal sealed record UpdateCheckResult(
@@ -150,5 +186,6 @@ internal sealed record UpdateCheckResult(
 	string Url,
 	string RepositoryUrl,
 	string Message,
-	bool CheckFailed);
+	bool CheckFailed,
+	string? Sha256);
 

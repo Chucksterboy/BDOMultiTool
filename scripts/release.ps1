@@ -129,7 +129,8 @@ Replace-Text $assemblyInfoFile 'AssemblyVersion\("[^"]+"\)' ('AssemblyVersion("'
 $manifest = [ordered]@{
 	version = $versionTag
 	releaseUrl = "https://github.com/$Repository/releases/latest"
-	downloadUrl = "https://github.com/$Repository/releases/latest/download/$installerAssetName"
+	downloadUrl = "https://github.com/$Repository/releases/download/$versionTag/$installerAssetName"
+	sha256 = ""
 	notes = if ([string]::IsNullOrWhiteSpace($Notes)) { "BDO Multi-Tool $versionTag release." } else { $Notes }
 }
 $manifest | ConvertTo-Json | Set-Content -LiteralPath $updateManifestFile -Encoding UTF8
@@ -173,6 +174,10 @@ if (!(Test-Path -LiteralPath $installerExe)) {
 }
 Copy-Item -LiteralPath $installerExe -Destination $installerReleaseAsset -Force
 
+$manifest.sha256 = (Get-FileHash -LiteralPath $installerReleaseAsset -Algorithm SHA256).Hash.ToUpperInvariant()
+$manifest | ConvertTo-Json | Set-Content -LiteralPath $updateManifestFile -Encoding UTF8
+Copy-Item -LiteralPath $updateManifestFile -Destination (Join-Path $sourceRoot "update.json") -Force
+
 Remove-Item -LiteralPath $installerPayload -Force -ErrorAction SilentlyContinue
 
 & $gh auth status | Out-Host
@@ -189,11 +194,6 @@ if ($LASTEXITCODE -ne 0) {
 & $git tag -a $versionTag -m "BDO Multi-Tool $versionTag"
 if ($LASTEXITCODE -ne 0) {
 	throw "Git tag failed. The tag may already exist."
-}
-
-& $git push origin main
-if ($LASTEXITCODE -ne 0) {
-	throw "Git push failed."
 }
 
 & $git push origin $versionTag
@@ -217,6 +217,11 @@ if ($Draft) {
 & $gh @releaseArgs
 if ($LASTEXITCODE -ne 0) {
 	throw "GitHub release creation failed."
+}
+
+& $git push origin main
+if ($LASTEXITCODE -ne 0) {
+	throw "Git push failed. The release exists, but the update manifest has not been published."
 }
 
 Write-Host "Release complete: $versionTag"

@@ -1,6 +1,7 @@
 ﻿{
-    "version":  "v0.9.10",
+    "version":  "v0.9.11",
     "releaseUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest",
-    "downloadUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest/download/BDO-Multi-Tool-Installer.exe",
-    "notes":  "Corrects the Support Me destination to ko-fi.com/chucksterboy while retaining the refined pulsating heart, live footer version badge, and secure external-link allowlist."
+    "downloadUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/download/v0.9.11/BDO-Multi-Tool-Installer.exe",
+    "sha256":  "16AA2F789056F08AFF7CCC3D754CEEB02CF86188ADC417F369BBDC9F0830CEC1",
+    "notes":  "Adds a hardened one-click updater that downloads the exact versioned installer, verifies its size and SHA-256 integrity, launches it immediately, and closes the running app for a smooth update. GitHub fallback selection now targets the correct Windows installer asset, and release publishing avoids serving a previous installer during rollout."
 }
