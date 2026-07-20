@@ -381,10 +381,18 @@ internal static class Program
 		string cssTarget = Path.Combine(paths.Root, Path.GetFileName(cssSource));
 		string scriptTarget = Path.Combine(paths.Root, Path.GetFileName(scriptSource));
 		string versionStampPath = Path.Combine(paths.Root, ".assets-version");
-		bool assetsReady = File.Exists(paths.HtmlPath)
-			&& File.Exists(cssTarget)
-			&& File.Exists(scriptTarget)
-			&& Directory.Exists(Path.Combine(paths.Root, "Assets"))
+		if (!File.Exists(htmlSource) || !File.Exists(cssSource) || !File.Exists(scriptSource))
+		{
+			throw new FileNotFoundException("The application interface is missing.", htmlSource);
+		}
+
+		// Core UI files are cheap to compare and must never be trusted solely from the
+		// version stamp. Older builds could leave a current stamp beside stale HTML.
+		CopyFileIfChanged(htmlSource, paths.HtmlPath);
+		CopyFileIfChanged(cssSource, cssTarget);
+		CopyFileIfChanged(scriptSource, scriptTarget);
+
+		bool assetsReady = Directory.Exists(Path.Combine(paths.Root, "Assets"))
 			&& Directory.Exists(paths.ThemeAssetsPath)
 			&& File.Exists(versionStampPath)
 			&& string.Equals(File.ReadAllText(versionStampPath).Trim(), AppVersion.Current, StringComparison.Ordinal);
@@ -392,14 +400,7 @@ internal static class Program
 		{
 			return;
 		}
-		if (!File.Exists(htmlSource) || !File.Exists(cssSource) || !File.Exists(scriptSource))
-		{
-			throw new FileNotFoundException("The application interface is missing.", htmlSource);
-		}
 
-		CopyFileIfChanged(htmlSource, paths.HtmlPath);
-		CopyFileIfChanged(cssSource, cssTarget);
-		CopyFileIfChanged(scriptSource, scriptTarget);
 		CopyFileIfChanged(Path.Combine(baseDirectory, "gold-coins.png"), Path.Combine(paths.Root, "gold-coins.png"));
 		CopyDirectoryIfPresent(Path.Combine(baseDirectory, "Assets"), Path.Combine(paths.Root, "Assets"));
 		CopyDirectoryIfPresent(Path.Combine(baseDirectory, "ThemeAssets"), paths.ThemeAssetsPath);

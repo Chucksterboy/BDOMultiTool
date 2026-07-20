@@ -46,6 +46,18 @@ if ($css -notmatch 'body\[data-motion="reduced"\]' -or $script -notmatch 'visibi
 	throw "Reduced-motion or visibility lifecycle handling is missing."
 }
 
+$dayNightMatch = [regex]::Match($script, 'dayNight:\{\s*cycleMinutes:(\d+),\s*nightMinutes:(\d+),\s*nightStartUtcIso:"([^"]+)"')
+if (!$dayNightMatch.Success) { throw "The BDO day/night cycle must use a fixed UTC anchor." }
+$cycleMs = [int64]$dayNightMatch.Groups[1].Value * 60000
+$nightMs = [int64]$dayNightMatch.Groups[2].Value * 60000
+$nightStart = [DateTimeOffset]::Parse($dayNightMatch.Groups[3].Value).ToUnixTimeMilliseconds()
+$observedAt = [DateTimeOffset]::Parse('2026-07-20T11:52:53Z').ToUnixTimeMilliseconds()
+$elapsed = (($observedAt - $nightStart) % $cycleMs + $cycleMs) % $cycleMs
+$remaining = $nightMs - $elapsed
+if ($elapsed -lt 0 -or $elapsed -ge $nightMs -or $remaining -lt (26 * 60000) -or $remaining -gt (28 * 60000)) {
+	throw "The BDO day/night cycle no longer matches the live EU phase captured on 2026-07-20."
+}
+
 $functionNames = [regex]::Matches($script, '(?m)^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(') |
 	ForEach-Object { $_.Groups[1].Value }
 $duplicates = $functionNames | Group-Object | Where-Object Count -gt 1

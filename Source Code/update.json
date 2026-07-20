@@ -1,7 +1,7 @@
 ﻿{
-    "version":  "v0.9.15",
+    "version":  "v0.9.16",
     "releaseUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest",
-    "downloadUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/download/v0.9.15/BDO-Multi-Tool-Installer.exe",
-    "sha256":  "D30D8F96ABFC4C44455ED2214172ABBEDB3B027DB1D4BD93406910C119DD7F28",
-    "notes":  "Replaces corrupted and placeholder dashboard timer badges with crisp, centered SVG icons across Home and Reset Timers, with regression coverage for all eleven badges."
+    "downloadUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/download/v0.9.16/BDO-Multi-Tool-Installer.exe",
+    "sha256":  "DF7B9E60D32011A3163AB1D279AA7527F9769BBBE8DF3992DE39CB0FC406CA60",
+    "notes":  "Corrected the BDO day/night cycle timing and hardened startup UI asset refresh so current interface files always load."
 }
