@@ -23,8 +23,6 @@ internal sealed class MarketAnalyticsService : IDisposable
 
 	private readonly SemaphoreSlim updateLock = new SemaphoreSlim(1, 1);
 
-	private readonly SemaphoreSlim outfitLock = new SemaphoreSlim(1, 1);
-
 	private readonly Semaphore processUpdateLock = new Semaphore(1, 1, "Local\\BDOMultiTool-MarketUpdate");
 
 	private readonly CancellationTokenSource shutdown = new CancellationTokenSource();
@@ -33,11 +31,17 @@ internal sealed class MarketAnalyticsService : IDisposable
 
 	private readonly Dictionary<string, (OutfitReport Report, DateTimeOffset CachedUtc)> reportCache = new(StringComparer.OrdinalIgnoreCase);
 
-	private Timer? timer;
+	private CancellationTokenSource? timerCancellation;
+
+	private Task timerTask = Task.CompletedTask;
+
+	private Task startupCatchUpTask = Task.CompletedTask;
 
 	private MarketSettings settings = MarketSettings.Default;
 
-	private bool foregroundUpdatesEnabled;
+	private int disposeRequested;
+
+	private int resourcesDisposed;
 
 	public MarketSettings Settings => settings;
 
@@ -58,18 +62,18 @@ internal sealed class MarketAnalyticsService : IDisposable
 	{
 		await database.InitializeAsync(cancellationToken);
 		MarketSettings storedSettings = await database.GetSettingsAsync(cancellationToken);
-		settings = storedSettings with { Region = "eu" };
-		if (!string.Equals(storedSettings.Region, "eu", StringComparison.OrdinalIgnoreCase))
+		settings = new MarketSettings("eu", 1440);
+		if (!string.Equals(storedSettings.Region, "eu", StringComparison.OrdinalIgnoreCase)
+			|| storedSettings.IntervalMinutes != settings.IntervalMinutes)
 		{
 			await database.SaveSettingsAsync(settings, cancellationToken);
 		}
-		foregroundUpdatesEnabled = startForegroundUpdates;
 		if (!startForegroundUpdates)
 		{
 			return;
 		}
 		ResetTimer();
-		_ = Task.Run(async delegate
+		startupCatchUpTask = Task.Run(async delegate
 		{
 			try
 			{
@@ -165,77 +169,14 @@ internal sealed class MarketAnalyticsService : IDisposable
 		}
 	}
 
-	public async Task SaveSettingsAsync(string region, int intervalMinutes, CancellationToken cancellationToken)
-	{
-		string previousRegion = settings.Region;
-		string normalizedRegion = NormalizeRegion(region);
-		settings = new MarketSettings(normalizedRegion, Math.Clamp(intervalMinutes, 5, 1440));
-		await database.SaveSettingsAsync(settings, cancellationToken);
-		if (foregroundUpdatesEnabled)
-		{
-			ResetTimer();
-		}
-		if (!string.Equals(previousRegion, settings.Region, StringComparison.OrdinalIgnoreCase))
-		{
-			await SyncOutfitCatalogAsync(settings.Region, cancellationToken);
-		}
-		this.DataChanged?.Invoke(this, EventArgs.Empty);
-	}
-
 	private static string NormalizeRegion(string region)
 	{
 		return "eu";
 	}
 
-	public async Task RefreshAllAsync(CancellationToken cancellationToken)
-	{
-		if (!(await updateLock.WaitAsync(0, cancellationToken)))
-		{
-			this.StatusChanged?.Invoke(this, "An update is already running.");
-			return;
-		}
-		bool ownsProcessLock = false;
-		try
-		{
-			ownsProcessLock = processUpdateLock.WaitOne(0);
-			if (!ownsProcessLock)
-			{
-				this.StatusChanged?.Invoke(this, "A background market update is already running.");
-				return;
-			}
-			await RefreshRegionAsync("eu", DefaultOutfitsPerScan, cancellationToken);
-			this.DataChanged?.Invoke(this, EventArgs.Empty);
-		}
-		finally
-		{
-			if (ownsProcessLock)
-			{
-				processUpdateLock.Release();
-			}
-			updateLock.Release();
-		}
-	}
-
 	public Task ExportCsvAsync(string path, CancellationToken cancellationToken)
 	{
 		return database.ExportCsvAsync(settings.Region, path, cancellationToken);
-	}
-
-	public async Task RefreshOutfitsAsync(int batchSize, CancellationToken cancellationToken)
-	{
-		if (!(await outfitLock.WaitAsync(0, cancellationToken)))
-		{
-			return;
-		}
-		try
-		{
-			await RefreshOutfitsForRegionAsync(settings.Region, batchSize, cancellationToken);
-			this.DataChanged?.Invoke(this, EventArgs.Empty);
-		}
-		finally
-		{
-			outfitLock.Release();
-		}
 	}
 
 	public async Task RefreshDueMarketSamplesAsync(TimeSpan maximumAge, string reason, CancellationToken cancellationToken)
@@ -258,7 +199,7 @@ internal sealed class MarketAnalyticsService : IDisposable
 			foreach (string region in new[] { "eu" })
 			{
 				DateTimeOffset? latest = await database.GetLatestMarketSampleUtcAsync(region, cancellationToken);
-				bool isDue = !latest.HasValue || DateTimeOffset.UtcNow - latest.Value >= maximumAge;
+				bool isDue = await database.IsMarketRefreshDueAsync(region, maximumAge, cancellationToken);
 				if (!isDue)
 				{
 					this.StatusChanged?.Invoke(this, $"{region.ToUpperInvariant()} market samples are fresh. Last sample: {latest.Value.LocalDateTime:g}.");
@@ -292,32 +233,6 @@ internal sealed class MarketAnalyticsService : IDisposable
 		}
 	}
 
-	private async Task RefreshOutfitsForAllRegionsAsync(int batchSize, CancellationToken cancellationToken)
-	{
-		int failures = 0;
-		foreach (string region in new[] { "eu" })
-		{
-			try
-			{
-				await RefreshOutfitsForRegionAsync(region, Math.Max(1, batchSize / 2), cancellationToken);
-			}
-			catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-			{
-				throw;
-			}
-			catch (Exception exception)
-			{
-				failures++;
-				logger.Error($"Scheduled {region.ToUpperInvariant()} outfit scan failed.", exception);
-				this.StatusChanged?.Invoke(this, $"{region.ToUpperInvariant()} outfit scan failed. The other region will continue normally.");
-			}
-		}
-		if (failures == 0)
-		{
-			this.StatusChanged?.Invoke(this, "EU outfit samples are up to date.");
-		}
-	}
-
 	private async Task RefreshRegionAsync(string region, int outfitBatchSize, CancellationToken cancellationToken)
 	{
 		region = NormalizeRegion(region);
@@ -334,6 +249,10 @@ internal sealed class MarketAnalyticsService : IDisposable
 			{
 				variants = await provider.GetVariantsAsync(group.Key, region, cancellationToken);
 			}
+			catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+			{
+				throw;
+			}
 			catch (Exception exception)
 			{
 				failures += group.Count();
@@ -348,6 +267,10 @@ internal sealed class MarketAnalyticsService : IDisposable
 					MarketSnapshot snapshot = await provider.GetSnapshotAsync(tracked.ItemId, tracked.Enhancement, region, cancellationToken);
 					await database.SaveSnapshotAsync(tracked, variant, snapshot, cancellationToken);
 					completed++;
+				}
+				catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+				{
+					throw;
 				}
 				catch (Exception exception2)
 				{
@@ -424,29 +347,90 @@ internal sealed class MarketAnalyticsService : IDisposable
 
 	private void ResetTimer()
 	{
-		timer?.Dispose();
-		timer = new Timer(async delegate
+		timerCancellation?.Cancel();
+		timerCancellation?.Dispose();
+		timerCancellation = CancellationTokenSource.CreateLinkedTokenSource(shutdown.Token);
+		timerTask = RunTimerAsync(TimeSpan.FromMinutes(settings.IntervalMinutes), timerCancellation.Token);
+	}
+
+	private async Task RunTimerAsync(TimeSpan interval, CancellationToken cancellationToken)
+	{
+		using PeriodicTimer periodicTimer = new(interval);
+		try
 		{
-			try
+			while (await periodicTimer.WaitForNextTickAsync(cancellationToken))
 			{
-				await RefreshDueMarketSamplesAsync(DefaultCollectorInterval, "scheduled check", shutdown.Token);
+				try
+				{
+					await RefreshDueMarketSamplesAsync(DefaultCollectorInterval, "scheduled check", cancellationToken);
+				}
+				catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+				{
+					break;
+				}
+				catch (Exception exception)
+				{
+					logger.Error("Scheduled market update failed.", exception);
+					this.StatusChanged?.Invoke(this, "Scheduled update failed. The app will retry at the next interval.");
+				}
 			}
-			catch (OperationCanceledException)
-			{
-			}
-			catch (Exception exception)
-			{
-				logger.Error("Scheduled market update failed.", exception);
-				this.StatusChanged?.Invoke(this, "Scheduled update failed. The app will retry at the next interval.");
-			}
-		}, null, TimeSpan.FromMinutes(settings.IntervalMinutes), TimeSpan.FromMinutes(settings.IntervalMinutes));
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+		}
 	}
 
 	public void Dispose()
 	{
+		if (Interlocked.Exchange(ref disposeRequested, 1) != 0)
+		{
+			return;
+		}
 		shutdown.Cancel();
-		timer?.Dispose();
+		timerCancellation?.Cancel();
+		Task pendingTasks = Task.WhenAll(timerTask, startupCatchUpTask);
+		try
+		{
+			pendingTasks.Wait(TimeSpan.FromSeconds(2));
+		}
+		catch (AggregateException exception)
+		{
+			if (exception.Flatten().InnerExceptions.Any(error => error is not OperationCanceledException))
+			{
+				logger.Warn("A market background task ended with an error during shutdown.");
+			}
+		}
+		if (pendingTasks.IsCompleted)
+		{
+			DisposeResources();
+			return;
+		}
+
+		logger.Warn("Market background work is still stopping; resource cleanup was deferred.");
+		_ = pendingTasks.ContinueWith(
+			task =>
+			{
+				_ = task.Exception;
+				DisposeResources();
+			},
+			CancellationToken.None,
+			TaskContinuationOptions.ExecuteSynchronously,
+			TaskScheduler.Default);
+	}
+
+	private void DisposeResources()
+	{
+		if (Interlocked.Exchange(ref resourcesDisposed, 1) != 0)
+		{
+			return;
+		}
+		timerCancellation?.Dispose();
+		updateLock.Dispose();
 		shutdown.Dispose();
 		processUpdateLock.Dispose();
+		if (provider is IDisposable disposableProvider)
+		{
+			disposableProvider.Dispose();
+		}
 	}
 }

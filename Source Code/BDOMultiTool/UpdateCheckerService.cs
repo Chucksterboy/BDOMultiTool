@@ -72,6 +72,10 @@ internal sealed class UpdateCheckerService : IDisposable
 				CheckFailed: false,
 				Sha256: NormalizeSha256(manifest.Sha256));
 		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			throw;
+		}
 		catch (Exception ex)
 		{
 			logger.Warn("Update manifest check failed: " + ex.Message);
@@ -132,6 +136,10 @@ internal sealed class UpdateCheckerService : IDisposable
 				CheckFailed: false,
 				Sha256: sha256);
 		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			throw;
+		}
 		catch (Exception ex)
 		{
 			logger.Warn("GitHub release update check failed: " + ex.Message);
@@ -156,6 +164,9 @@ internal sealed class UpdateCheckerService : IDisposable
 	private static bool TryParseVersion(string value, out Version? version)
 	{
 		string clean = (value ?? string.Empty).Trim().TrimStart('v', 'V');
+		int prereleaseSeparator = clean.IndexOfAny(['-', '+']);
+		if (prereleaseSeparator >= 0)
+			clean = clean[..prereleaseSeparator];
 		return Version.TryParse(clean, out version);
 	}
 

@@ -1,7 +1,7 @@
 ﻿{
-    "version":  "v0.9.16",
+    "version":  "v0.9.17",
     "releaseUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/latest",
-    "downloadUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/download/v0.9.16/BDO-Multi-Tool-Installer.exe",
-    "sha256":  "DF7B9E60D32011A3163AB1D279AA7527F9769BBBE8DF3992DE39CB0FC406CA60",
-    "notes":  "Corrected the BDO day/night cycle timing and hardened startup UI asset refresh so current interface files always load."
+    "downloadUrl":  "https://github.com/Chucksterboy/BDOMultiTool/releases/download/v0.9.17/BDO-Multi-Tool-Installer.exe",
+    "sha256":  "F28D67B646CD29641CE83C8C134CF0A659D184E796327CA63FBC4052F7B4EC9C",
+    "notes":  "Comprehensive reliability and performance update: hardened Grind Tracker session storage and EU market caching, improved OCR handling and UI responsiveness, strengthened coupon/event caches, safer automatic updates and installer shutdown behavior, and broader accessibility and regression checks."
 }

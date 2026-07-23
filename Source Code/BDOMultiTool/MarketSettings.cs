@@ -4,7 +4,7 @@ namespace BDOMultiTool;
 
 internal sealed record MarketSettings(string Region, int IntervalMinutes)
 {
-	public static MarketSettings Default { get; } = new MarketSettings("eu", 30);
+	public static MarketSettings Default { get; } = new MarketSettings("eu", 1440);
 
 	[CompilerGenerated]
 	private MarketSettings(MarketSettings original)

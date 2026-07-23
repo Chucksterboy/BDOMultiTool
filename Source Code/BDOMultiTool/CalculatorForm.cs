@@ -83,6 +83,9 @@ internal sealed class CalculatorForm : Form
 	private const int WsMaximizeBox = 0x00010000;
 	private const int ResizeBorder = 9;
 	private const int ResizeCorner = 18;
+	private const int MaxGrindImageBytes = 25 * 1024 * 1024;
+	private const long MaxGrindImagePixels = 24_000_000;
+	private const long MaxInstallerBytes = 250L * 1024 * 1024;
 
 	private readonly AppPaths paths;
 
@@ -104,7 +107,11 @@ internal sealed class CalculatorForm : Form
 
 	private readonly UpdateCheckerService updateCheckerService;
 
+	private readonly AppStateStore appStateStore;
+
 	private MarketAnalyticsService? marketService;
+
+	private Task? marketInitializationTask;
 
 	private readonly GrindMarketPriceProvider grindMarketPriceProvider;
 
@@ -130,6 +137,14 @@ internal sealed class CalculatorForm : Form
 
 	private int couponBadgeCount;
 
+	private System.Windows.Forms.Timer? backgroundNotificationTimer;
+
+	private int backgroundNotificationTickActive;
+
+	private readonly object grindIconCacheSync = new();
+
+	private readonly Dictionary<string, Bitmap> grindIconCache = new(StringComparer.OrdinalIgnoreCase);
+
 	private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
 	{
 		PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -145,6 +160,7 @@ internal sealed class CalculatorForm : Form
 		couponService = new CouponService(paths, logger);
 		eventService = new EventService(paths, logger);
 		updateCheckerService = new UpdateCheckerService(logger);
+		appStateStore = new AppStateStore(paths, logger);
 		grindMarketPriceProvider = new GrindMarketPriceProvider(logger);
 		Text = "BDO Multi-Tool";
 		appIcon = (Icon?)System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath)?.Clone() ?? SystemIcons.Application;
@@ -499,8 +515,13 @@ internal sealed class CalculatorForm : Form
 	private void SpeakText(string text)
 	{
 		string safeText = string.IsNullOrWhiteSpace(text) ? "BDO Multi-Tool alert." : text.Trim();
+		if (safeText.Length > 500)
+		{
+			safeText = safeText[..500];
+		}
 		_ = Task.Run(delegate
 		{
+			object? voice = null;
 			try
 			{
 				Type? voiceType = Type.GetTypeFromProgID("SAPI.SpVoice");
@@ -508,12 +529,23 @@ internal sealed class CalculatorForm : Form
 				{
 					throw new InvalidOperationException("Windows text to speech is not available.");
 				}
-				dynamic voice = Activator.CreateInstance(voiceType)!;
-				voice.Speak(safeText, 1);
+				voice = Activator.CreateInstance(voiceType);
+				if (voice is null)
+				{
+					throw new InvalidOperationException("Windows text to speech could not be started.");
+				}
+				voiceType.InvokeMember("Speak", System.Reflection.BindingFlags.InvokeMethod, null, voice, [safeText, 1]);
 			}
 			catch (Exception ex)
 			{
 				logger.Error("Text to speech failed.", ex);
+			}
+			finally
+			{
+				if (voice is not null && Marshal.IsComObject(voice))
+				{
+					Marshal.FinalReleaseComObject(voice);
+				}
 			}
 		});
 	}
@@ -606,6 +638,16 @@ internal sealed class CalculatorForm : Form
 		try { trayBadgeIcon?.Dispose(); } catch { }
 		try { appIcon.Dispose(); } catch { }
 		try { eventsBrowserView?.Dispose(); } catch { }
+		try { backgroundNotificationTimer?.Stop(); } catch { }
+		try { backgroundNotificationTimer?.Dispose(); } catch { }
+		lock (grindIconCacheSync)
+		{
+			foreach (Bitmap bitmap in grindIconCache.Values)
+			{
+				try { bitmap.Dispose(); } catch { }
+			}
+			grindIconCache.Clear();
+		}
 		try { webView.Dispose(); } catch { }
 		try { lifetimeCancellation.Dispose(); } catch { }
 		base.OnFormClosed(e);
@@ -613,7 +655,6 @@ internal sealed class CalculatorForm : Form
 
 	private async Task InitializeAsync()
 	{
-		_ = 2;
 		try
 		{
 			CancellationToken cancellationToken = lifetimeCancellation.Token;
@@ -621,7 +662,6 @@ internal sealed class CalculatorForm : Form
 			minimizeToTray = (await AppBehaviorSettings.LoadAsync(paths, cancellationToken)).MinimizeToTray;
 			BlackDesertMarketProvider provider = new BlackDesertMarketProvider(logger);
 			marketService = new MarketAnalyticsService(database, provider, logger);
-			await marketService.InitializeAsync(cancellationToken);
 			marketService.DataChanged += delegate
 			{
 				PostEvent("dataChanged", null);
@@ -630,6 +670,12 @@ internal sealed class CalculatorForm : Form
 			{
 				PostEvent("status", new { message });
 			};
+			marketInitializationTask = marketService.InitializeAsync(cancellationToken);
+			_ = marketInitializationTask.ContinueWith(
+				task => logger.Error("Market Analytics initialization failed.", task.Exception?.GetBaseException() ?? new InvalidOperationException("Unknown market initialization failure.")),
+				default,
+				TaskContinuationOptions.OnlyOnFaulted,
+				TaskScheduler.Default);
 			CoreWebView2Environment environment = await CoreWebView2Environment.CreateAsync(null, paths.WebViewDataPath);
 			await webView.EnsureCoreWebView2Async(environment);
 			webView.CoreWebView2.SetVirtualHostNameToFolderMapping(LocalAppHost, paths.Root, CoreWebView2HostResourceAccessKind.DenyCors);
@@ -684,11 +730,85 @@ internal sealed class CalculatorForm : Form
 			}
 			webView.Visible = true;
 			loadingLabel.Visible = false;
+			StartBackgroundNotificationTimer();
+		}
+		catch (OperationCanceledException) when (lifetimeCancellation.IsCancellationRequested)
+		{
 		}
 		catch (Exception ex)
 		{
 			logger.Error("Application startup failed.", ex);
-			ShowError("Could not start the calculator." + Environment.NewLine + Environment.NewLine + ex.Message);
+			ShowError("Could not start BDO Multi-Tool." + Environment.NewLine + Environment.NewLine + ex.Message);
+		}
+	}
+
+	private async Task<MarketAnalyticsService> GetMarketServiceAsync(CancellationToken cancellationToken)
+	{
+		MarketAnalyticsService service = marketService ?? throw new InvalidOperationException("Market Analytics is not ready.");
+		if (marketInitializationTask is not null)
+		{
+			await marketInitializationTask.WaitAsync(cancellationToken);
+		}
+		return service;
+	}
+
+	private void StartBackgroundNotificationTimer()
+	{
+		backgroundNotificationTimer?.Stop();
+		backgroundNotificationTimer?.Dispose();
+		backgroundNotificationTimer = new System.Windows.Forms.Timer
+		{
+			Interval = 10_000
+		};
+		backgroundNotificationTimer.Tick += async (_, _) => await TickBackgroundNotificationsAsync();
+		backgroundNotificationTimer.Start();
+		_ = TickBackgroundNotificationsAsync();
+	}
+
+	private async Task TickBackgroundNotificationsAsync()
+	{
+		if (Interlocked.Exchange(ref backgroundNotificationTickActive, 1) != 0)
+		{
+			return;
+		}
+		try
+		{
+			if (!IsDisposed && webView.CoreWebView2 is not null)
+			{
+				await webView.CoreWebView2.ExecuteScriptAsync(
+					"window.__bdoRunBackgroundNotifications?.();");
+			}
+		}
+		catch (Exception ex) when (ex is InvalidOperationException or COMException)
+		{
+			logger.Warn("Background notification tick was skipped: " + ex.Message);
+		}
+		finally
+		{
+			Volatile.Write(ref backgroundNotificationTickActive, 0);
+		}
+	}
+
+	public void ExitForUpdate()
+	{
+		if (IsDisposed)
+		{
+			return;
+		}
+		void Exit()
+		{
+			forceCloseFromTray = true;
+			minimizeToTray = false;
+			TrySetTrayVisible(false);
+			Close();
+		}
+		if (InvokeRequired)
+		{
+			BeginInvoke((Action)Exit);
+		}
+		else
+		{
+			Exit();
 		}
 	}
 
@@ -696,6 +816,7 @@ internal sealed class CalculatorForm : Form
 	{
 		string? requestId = null;
 		CancellationTokenSource? requestCancellation = null;
+		bool requestRegistered = false;
 		try
 		{
 			using JsonDocument document = JsonDocument.Parse(e.WebMessageAsJson);
@@ -725,6 +846,7 @@ internal sealed class CalculatorForm : Form
 			{
 				throw new InvalidOperationException("The request identifier is invalid or already active.");
 			}
+			requestRegistered = true;
 
 			PostResponse(requestId, ok: true, await ExecuteCommandAsync(command, payload, requestCancellation.Token), null);
 		}
@@ -734,12 +856,12 @@ internal sealed class CalculatorForm : Form
 		}
 		catch (Exception ex)
 		{
-			logger.Error("Market Analytics command failed.", ex);
+			logger.Error("Application command failed.", ex);
 			PostResponse(requestId, ok: false, null, ex.Message);
 		}
 		finally
 		{
-			if (!string.IsNullOrWhiteSpace(requestId))
+			if (requestRegistered && !string.IsNullOrWhiteSpace(requestId))
 			{
 				activeBridgeRequests.TryRemove(requestId, out _);
 			}
@@ -814,6 +936,16 @@ internal sealed class CalculatorForm : Form
 			return await LoadEventsWithBrowserFallbackAsync(forceRefresh: true, cancellationToken);
 		case "getAppVersion":
 			return new { version = AppVersion.Current };
+		case "loadGrindSessions":
+			return await appStateStore.LoadGrindSessionsAsync(cancellationToken);
+		case "saveGrindSessions":
+		{
+			if (!payload.TryGetProperty("sessions", out JsonElement sessions))
+			{
+				throw new InvalidDataException("No Grind Tracker sessions were supplied.");
+			}
+			return new { count = await appStateStore.SaveGrindSessionsAsync(sessions, cancellationToken) };
+		}
 		case "checkForUpdates":
 			return await updateCheckerService.CheckAsync(cancellationToken);
 		case "downloadAndInstallUpdate":
@@ -824,8 +956,6 @@ internal sealed class CalculatorForm : Form
 				?? new CouponSettings(true, true, "", "all");
 			return await couponService.SaveSettingsAsync(settings, cancellationToken);
 		}
-		case "exportCoupons":
-			return await ExportCouponsAsync(cancellationToken);
 		case "setCouponBadgeCount":
 		{
 			int count = payload.TryGetProperty("count", out JsonElement countValue) && countValue.TryGetInt32(out int parsedCount)
@@ -893,9 +1023,73 @@ internal sealed class CalculatorForm : Form
 			}
 			return await grindMarketPriceProvider.GetPricesAsync(itemIds, region, cancellationToken);
 		}
+		case "getPortraitSettings":
+			return await portraitReplacerService.GetSettingsAsync(cancellationToken);
+		case "selectFaceTextureFolder":
+			return await SelectFaceTextureFolderAsync(payload, cancellationToken);
+		case "selectOldPortrait":
+			return SelectOldPortrait(payload);
+		case "selectNewPortrait":
+			return SelectNewPortrait(payload);
+		case "previewPortrait":
+		{
+			string imagePath = payload.GetProperty("newImagePath").GetString() ?? "";
+			string cropMode = payload.TryGetProperty("cropMode", out JsonElement cropModeValue) ? cropModeValue.GetString() ?? "crop" : "crop";
+			double cropX = payload.TryGetProperty("cropX", out JsonElement cropXValue) ? cropXValue.GetDouble() : 50.0;
+			double cropY = payload.TryGetProperty("cropY", out JsonElement cropYValue) ? cropYValue.GetDouble() : 50.0;
+			double zoom = payload.TryGetProperty("zoom", out JsonElement zoomValue) ? zoomValue.GetDouble() : 1.0;
+			return await Task.Run(
+				() => portraitReplacerService.DescribeImage(imagePath, renderFinal: true, cropMode, cropX, cropY, zoom),
+				cancellationToken);
+		}
+		case "replacePortrait":
+			return await portraitReplacerService.ReplaceAsync(
+				payload.GetProperty("faceTextureFolder").GetString() ?? "",
+				payload.GetProperty("oldImagePath").GetString() ?? "",
+				payload.GetProperty("newImagePath").GetString() ?? "",
+				payload.TryGetProperty("cropMode", out JsonElement replaceCropMode) ? replaceCropMode.GetString() ?? "crop" : "crop",
+				payload.TryGetProperty("cropX", out JsonElement replaceCropX) ? replaceCropX.GetDouble() : 50.0,
+				payload.TryGetProperty("cropY", out JsonElement replaceCropY) ? replaceCropY.GetDouble() : 50.0,
+				payload.TryGetProperty("zoom", out JsonElement replaceZoom) ? replaceZoom.GetDouble() : 1.0,
+				cancellationToken);
+		case "openPortraitBackupFolder":
+			return portraitReplacerService.OpenBackupFolder(payload.GetProperty("faceTextureFolder").GetString() ?? "");
+		case "restoreLastPortraitBackup":
+			return await portraitReplacerService.RestoreLastBackupAsync(
+				payload.GetProperty("faceTextureFolder").GetString() ?? "",
+				payload.GetProperty("oldImagePath").GetString() ?? "",
+				cancellationToken);
+		case "getFontChangerSettings":
+			return await fontChangerService.GetSettingsAsync(cancellationToken);
+		case "getFontPresets":
+			return await Task.Run(fontChangerService.GetPresetGallery, cancellationToken);
+		case "selectBdoFolder":
+			return await SelectBdoFolderAsync(payload, cancellationToken);
+		case "selectCustomFont":
+			return await SelectCustomFontAsync(payload, cancellationToken);
+		case "applyPresetFont":
+			return await fontChangerService.ApplyPresetAsync(
+				payload.GetProperty("bdoFolder").GetString() ?? "",
+				payload.GetProperty("presetId").GetString() ?? "",
+				cancellationToken);
+		case "applyCustomFont":
+			return await fontChangerService.ApplyCustomAsync(
+				payload.GetProperty("bdoFolder").GetString() ?? "",
+				payload.GetProperty("fontPath").GetString() ?? "",
+				cancellationToken);
+		case "restoreLastFontBackup":
+			return await fontChangerService.RestoreLastBackupAsync(
+				payload.GetProperty("bdoFolder").GetString() ?? "",
+				cancellationToken);
+		case "removeCustomFont":
+			return await fontChangerService.RemoveCustomFontAsync(
+				payload.GetProperty("bdoFolder").GetString() ?? "",
+				cancellationToken);
+		case "openBdoFontFolder":
+			return fontChangerService.OpenFontFolder(payload.GetProperty("bdoFolder").GetString() ?? "");
 		default:
 		{
-			MarketAnalyticsService service = marketService ?? throw new InvalidOperationException("Market Analytics is not ready.");
+			MarketAnalyticsService service = await GetMarketServiceAsync(cancellationToken);
 			switch (command)
 			{
 			case "initialize":
@@ -946,88 +1140,8 @@ internal sealed class CalculatorForm : Form
 				string region = payload.TryGetProperty("region", out value10) ? value10.GetString() ?? service.Settings.Region : service.Settings.Region;
 				return await service.GetOutfitReportAsync(region, cancellationToken);
 			}
-			case "refreshOutfits":
-				await service.RefreshOutfitsAsync(MarketAnalyticsService.DefaultOutfitsPerScan, cancellationToken);
-			{
-				JsonElement value11;
-				string region = payload.TryGetProperty("region", out value11) ? value11.GetString() ?? service.Settings.Region : service.Settings.Region;
-				return await service.GetOutfitReportAsync(region, cancellationToken);
-			}
-			case "refresh":
-				await service.RefreshAllAsync(cancellationToken);
-			{
-				JsonElement value13;
-				string region = payload.TryGetProperty("region", out value13) ? value13.GetString() ?? service.Settings.Region : service.Settings.Region;
-				return new
-				{
-					region = region,
-					items = await service.GetTrackedItemsAsync(region, cancellationToken),
-					outfits = await service.GetOutfitReportAsync(region, cancellationToken)
-				};
-			}
-			case "saveSettings":
-			{
-				await service.SaveSettingsAsync("eu", service.Settings.IntervalMinutes, cancellationToken);
-				MarketSettings settings = service.Settings;
-				return new
-				{
-					settings = settings,
-					items = await service.GetTrackedItemsAsync(cancellationToken)
-				};
-			}
 			case "exportCsv":
 				return await ExportCsvAsync(service, cancellationToken);
-			case "getPortraitSettings":
-				return await portraitReplacerService.GetSettingsAsync(cancellationToken);
-			case "selectFaceTextureFolder":
-				return await SelectFaceTextureFolderAsync(payload, cancellationToken);
-			case "selectOldPortrait":
-				return SelectOldPortrait(payload);
-			case "selectNewPortrait":
-				return SelectNewPortrait(payload);
-			case "previewPortrait":
-			{
-				JsonElement value5;
-				JsonElement value6;
-				JsonElement value7;
-				JsonElement value8;
-				string imagePath = payload.GetProperty("newImagePath").GetString() ?? "";
-				string cropMode = payload.TryGetProperty("cropMode", out value5) ? value5.GetString() ?? "crop" : "crop";
-				double cropX = payload.TryGetProperty("cropX", out value6) ? value6.GetDouble() : 50.0;
-				double cropY = payload.TryGetProperty("cropY", out value7) ? value7.GetDouble() : 50.0;
-				double zoom = payload.TryGetProperty("zoom", out value8) ? value8.GetDouble() : 1.0;
-				return await Task.Run(() => portraitReplacerService.DescribeImage(imagePath, renderFinal: true, cropMode, cropX, cropY, zoom), cancellationToken);
-			}
-			case "replacePortrait":
-			{
-				JsonElement value;
-				JsonElement value2;
-				JsonElement value3;
-				JsonElement value4;
-				return await portraitReplacerService.ReplaceAsync(payload.GetProperty("faceTextureFolder").GetString() ?? "", payload.GetProperty("oldImagePath").GetString() ?? "", payload.GetProperty("newImagePath").GetString() ?? "", payload.TryGetProperty("cropMode", out value) ? (value.GetString() ?? "crop") : "crop", payload.TryGetProperty("cropX", out value2) ? value2.GetDouble() : 50.0, payload.TryGetProperty("cropY", out value3) ? value3.GetDouble() : 50.0, payload.TryGetProperty("zoom", out value4) ? value4.GetDouble() : 1.0, cancellationToken);
-			}
-			case "openPortraitBackupFolder":
-				return portraitReplacerService.OpenBackupFolder(payload.GetProperty("faceTextureFolder").GetString() ?? "");
-			case "restoreLastPortraitBackup":
-				return await portraitReplacerService.RestoreLastBackupAsync(payload.GetProperty("faceTextureFolder").GetString() ?? "", payload.GetProperty("oldImagePath").GetString() ?? "", cancellationToken);
-			case "getFontChangerSettings":
-				return await fontChangerService.GetSettingsAsync(cancellationToken);
-			case "getFontPresets":
-				return await Task.Run(fontChangerService.GetPresetGallery, cancellationToken);
-			case "selectBdoFolder":
-				return await SelectBdoFolderAsync(payload, cancellationToken);
-			case "selectCustomFont":
-				return await SelectCustomFontAsync(payload, cancellationToken);
-			case "applyPresetFont":
-				return await fontChangerService.ApplyPresetAsync(payload.GetProperty("bdoFolder").GetString() ?? "", payload.GetProperty("presetId").GetString() ?? "", cancellationToken);
-			case "applyCustomFont":
-				return await fontChangerService.ApplyCustomAsync(payload.GetProperty("bdoFolder").GetString() ?? "", payload.GetProperty("fontPath").GetString() ?? "", cancellationToken);
-			case "restoreLastFontBackup":
-				return await fontChangerService.RestoreLastBackupAsync(payload.GetProperty("bdoFolder").GetString() ?? "", cancellationToken);
-			case "removeCustomFont":
-				return await fontChangerService.RemoveCustomFontAsync(payload.GetProperty("bdoFolder").GetString() ?? "", cancellationToken);
-			case "openBdoFontFolder":
-				return fontChangerService.OpenFontFolder(payload.GetProperty("bdoFolder").GetString() ?? "");
 			default:
 				throw new InvalidOperationException("Unknown command: " + command);
 			}
@@ -1051,6 +1165,10 @@ internal sealed class CalculatorForm : Form
 			object refreshed = await eventService.RefreshFromRenderedHtmlAsync(html, cancellationToken);
 			logger.Info("Events browser fallback succeeded.");
 			return refreshed;
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			throw;
 		}
 		catch (Exception ex)
 		{
@@ -1190,6 +1308,10 @@ internal sealed class CalculatorForm : Form
 		{
 			throw new InvalidOperationException("The latest release does not include a direct Windows installer download yet.");
 		}
+		if (string.IsNullOrWhiteSpace(update.Sha256))
+		{
+			throw new InvalidOperationException("The update is missing its required SHA-256 integrity value. Open the release page instead.");
+		}
 
 		string safeVersion = new string(update.LatestVersion.Where(ch => char.IsLetterOrDigit(ch) || ch is '.' or '-' or '_').ToArray());
 		if (string.IsNullOrWhiteSpace(safeVersion))
@@ -1211,6 +1333,8 @@ internal sealed class CalculatorForm : Form
 			using HttpResponseMessage response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 			response.EnsureSuccessStatusCode();
 			long? expectedLength = response.Content.Headers.ContentLength;
+			if (expectedLength > MaxInstallerBytes)
+				throw new InvalidOperationException("The update installer is unexpectedly large.");
 
 			await using (Stream input = await response.Content.ReadAsStreamAsync(cancellationToken))
 			await using (FileStream output = new FileStream(
@@ -1221,7 +1345,7 @@ internal sealed class CalculatorForm : Form
 				81920,
 				FileOptions.Asynchronous | FileOptions.SequentialScan))
 			{
-				await input.CopyToAsync(output, cancellationToken);
+				await CopyWithLimitAsync(input, output, MaxInstallerBytes, cancellationToken);
 			}
 
 			FileInfo downloaded = new FileInfo(partialInstallerPath);
@@ -1230,15 +1354,14 @@ internal sealed class CalculatorForm : Form
 			if (expectedLength.HasValue && downloaded.Length != expectedLength.Value)
 				throw new InvalidOperationException("Downloaded installer size did not match the release asset.");
 
-			if (!string.IsNullOrWhiteSpace(update.Sha256))
+			await using (FileStream verificationStream = new FileStream(
+				partialInstallerPath,
+				FileMode.Open,
+				FileAccess.Read,
+				FileShare.Read,
+				81920,
+				FileOptions.Asynchronous | FileOptions.SequentialScan))
 			{
-				await using FileStream verificationStream = new FileStream(
-					partialInstallerPath,
-					FileMode.Open,
-					FileAccess.Read,
-					FileShare.Read,
-					81920,
-					FileOptions.Asynchronous | FileOptions.SequentialScan);
 				string actualSha256 = Convert.ToHexString(await SHA256.HashDataAsync(verificationStream, cancellationToken));
 				if (!string.Equals(actualSha256, update.Sha256, StringComparison.OrdinalIgnoreCase))
 					throw new InvalidOperationException("Downloaded installer failed its SHA-256 integrity check.");
@@ -1264,9 +1387,7 @@ internal sealed class CalculatorForm : Form
 		Process.Start(installerStart);
 		BeginInvoke(new Action(() =>
 		{
-			forceCloseFromTray = true;
-			TrySetTrayVisible(false);
-			Application.Exit();
+			ExitForUpdate();
 		}));
 
 		return new
@@ -1274,34 +1395,29 @@ internal sealed class CalculatorForm : Form
 			started = true,
 			latestVersion = update.LatestVersion,
 			installerPath,
-			integrityVerified = !string.IsNullOrWhiteSpace(update.Sha256)
+			integrityVerified = true
 		};
 	}
 
-	private async Task<object> ExportCouponsAsync(CancellationToken cancellationToken)
+	private static async Task CopyWithLimitAsync(
+		Stream input,
+		Stream output,
+		long maximumBytes,
+		CancellationToken cancellationToken)
 	{
-		IReadOnlyList<CouponEntry> coupons = await couponService.GetCouponsAsync(cancellationToken);
-		using SaveFileDialog dialog = new SaveFileDialog
+		byte[] buffer = new byte[81920];
+		long total = 0;
+		while (true)
 		{
-			Title = "Export coupon list",
-			Filter = "CSV files (*.csv)|*.csv",
-			FileName = $"bdo-coupons-{DateTime.Now:yyyy-MM-dd}.csv",
-			OverwritePrompt = true
-		};
-		if (dialog.ShowDialog(this) != DialogResult.OK)
-			return new { cancelled = true };
-		StringBuilder csv = new StringBuilder();
-		csv.AppendLine("Code,Added,Expiry,Status,Rewards,Source");
-		foreach (CouponEntry coupon in coupons)
-		{
-			string rewards = string.Join("; ", coupon.Rewards.Select(reward => $"{reward.Quantity}x {reward.ItemName}"));
-			csv.AppendLine(string.Join(",", Csv(coupon.Code), Csv(coupon.AddedText), Csv(coupon.ExpiryText), Csv(coupon.IsExpired ? "Expired" : "Available"), Csv(rewards), Csv(coupon.Source)));
+			int read = await input.ReadAsync(buffer, cancellationToken);
+			if (read == 0)
+				break;
+			total += read;
+			if (total > maximumBytes)
+				throw new InvalidDataException("The downloaded file exceeded the allowed size.");
+			await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
 		}
-		await File.WriteAllTextAsync(dialog.FileName, csv.ToString(), new UTF8Encoding(true));
-		return new { cancelled = false, path = dialog.FileName };
 	}
-
-	private static string Csv(string value) => "\"" + value.Replace("\"", "\"\"") + "\"";
 
 	private static bool IsAllowedExternalHost(string host)
 	{
@@ -1514,6 +1630,7 @@ internal sealed class CalculatorForm : Form
 		{
 			return new { cancelled = true };
 		}
+		ValidateGrindImageFile(dialog.FileName);
 
 		string fileName = Path.GetFileName(dialog.FileName);
 		return await BuildGrindLootImageScanResponseAsync(fileName, dialog.FileName, dialog.FileName, drops, cancellationToken);
@@ -1553,13 +1670,14 @@ internal sealed class CalculatorForm : Form
 
 	private async Task<object> BuildGrindLootImageScanResponseAsync(string fileName, string imagePath, string? sourcePath, IReadOnlyList<GrindScanDrop> drops, CancellationToken cancellationToken)
 	{
-		Task<string> previewTask = Task.Run(() => CreateImagePreviewDataUrlAsync(imagePath), cancellationToken);
-		Task<string> textTask = TryReadImageTextAsync(imagePath);
-		Task<List<GrindLootImageMatch>> scanTask = Task.Run(() => ScanGrindLootImageForDropsAsync(imagePath, drops, cancellationToken), cancellationToken);
-		await Task.WhenAll(previewTask, textTask, scanTask);
-		string dataUrl = await previewTask;
-		string screenshotText = await textTask;
-		List<GrindLootImageMatch> matches = await scanTask;
+		List<GrindLootImageMatch> matches = await Task.Run(
+			() => ScanGrindLootImageForDropsAsync(imagePath, drops, cancellationToken),
+			cancellationToken);
+		cancellationToken.ThrowIfCancellationRequested();
+		string screenshotText = matches.Count == 0
+			? await TryReadImageTextAsync(imagePath, cancellationToken)
+			: string.Empty;
+		string dataUrl = await CreateImagePreviewDataUrlAsync(imagePath, cancellationToken);
 		return new
 		{
 			cancelled = false,
@@ -1576,7 +1694,29 @@ internal sealed class CalculatorForm : Form
 	{
 		int comma = dataUrl.IndexOf(',');
 		string payload = comma >= 0 ? dataUrl[(comma + 1)..] : dataUrl;
-		return Convert.FromBase64String(payload);
+		if (payload.Length > ((MaxGrindImageBytes + 2L) / 3L) * 4L)
+		{
+			throw new InvalidDataException("The screenshot is too large. Choose an image smaller than 25 MB.");
+		}
+		byte[] bytes = Convert.FromBase64String(payload);
+		if (bytes.Length > MaxGrindImageBytes)
+		{
+			throw new InvalidDataException("The screenshot is too large. Choose an image smaller than 25 MB.");
+		}
+		return bytes;
+	}
+
+	private static void ValidateGrindImageFile(string imagePath)
+	{
+		FileInfo file = new(imagePath);
+		if (!file.Exists)
+		{
+			throw new FileNotFoundException("The selected screenshot no longer exists.", imagePath);
+		}
+		if (file.Length <= 0 || file.Length > MaxGrindImageBytes)
+		{
+			throw new InvalidDataException("The screenshot must be a valid image smaller than 25 MB.");
+		}
 	}
 
 	private List<GrindScanDrop> ReadGrindScanDrops(JsonElement payload)
@@ -1620,10 +1760,11 @@ internal sealed class CalculatorForm : Form
 		return Path.Combine(paths.Root, icon.Replace('/', Path.DirectorySeparatorChar));
 	}
 
-	private static async Task<string> TryReadImageTextAsync(string imagePath)
+	private static async Task<string> TryReadImageTextAsync(string imagePath, CancellationToken cancellationToken)
 	{
 		try
 		{
+			cancellationToken.ThrowIfCancellationRequested();
 			OcrEngine? engine = OcrEngine.TryCreateFromUserProfileLanguages()
 				?? OcrEngine.TryCreateFromLanguage(new Language("en-US"));
 			if (engine is null)
@@ -1649,8 +1790,14 @@ internal sealed class CalculatorForm : Form
 				transform,
 				ExifOrientationMode.IgnoreExifOrientation,
 				ColorManagementMode.DoNotColorManage);
+			cancellationToken.ThrowIfCancellationRequested();
 			OcrResult result = await engine.RecognizeAsync(bitmap);
+			cancellationToken.ThrowIfCancellationRequested();
 			return string.Join(Environment.NewLine, result.Lines.Select(line => line.Text));
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			throw;
 		}
 		catch
 		{
@@ -1658,9 +1805,11 @@ internal sealed class CalculatorForm : Form
 		}
 	}
 
-	private static async Task<string> CreateImagePreviewDataUrlAsync(string imagePath)
+	private static async Task<string> CreateImagePreviewDataUrlAsync(string imagePath, CancellationToken cancellationToken)
 	{
-		using Bitmap source = await LoadBitmapAsync(imagePath);
+		cancellationToken.ThrowIfCancellationRequested();
+		using Bitmap source = await LoadBitmapAsync(imagePath, cancellationToken);
+		cancellationToken.ThrowIfCancellationRequested();
 		const int maxWidth = 900;
 		const int maxHeight = 520;
 		double scale = Math.Min(1.0, Math.Min((double)maxWidth / Math.Max(1, source.Width), (double)maxHeight / Math.Max(1, source.Height)));
@@ -1677,10 +1826,11 @@ internal sealed class CalculatorForm : Form
 		}
 		using MemoryStream stream = new MemoryStream();
 		preview.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
+		cancellationToken.ThrowIfCancellationRequested();
 		return "data:image/png;base64," + Convert.ToBase64String(stream.ToArray());
 	}
 
-	private static async Task<List<GrindLootImageMatch>> ScanGrindLootImageForDropsAsync(string imagePath, IReadOnlyList<GrindScanDrop> drops, CancellationToken cancellationToken)
+	private async Task<List<GrindLootImageMatch>> ScanGrindLootImageForDropsAsync(string imagePath, IReadOnlyList<GrindScanDrop> drops, CancellationToken cancellationToken)
 	{
 		List<GrindLootImageMatch> matches = new();
 		if (drops.Count == 0)
@@ -1688,18 +1838,26 @@ internal sealed class CalculatorForm : Form
 			return matches;
 		}
 
-		using Bitmap screenshot = await LoadBitmapAsync(imagePath);
+		using Bitmap screenshot = await LoadBitmapAsync(imagePath, cancellationToken);
 		List<LoadedGrindScanDrop> icons = new();
 		foreach (GrindScanDrop drop in drops)
 		{
 			cancellationToken.ThrowIfCancellationRequested();
 			try
 			{
-				using Bitmap bitmap = await LoadBitmapAsync(drop.IconPath);
-				icons.Add(new LoadedGrindScanDrop(drop, ResizeBitmap(bitmap, 40)));
+				Bitmap? bitmap = await GetCachedGrindIconAsync(drop.IconPath, cancellationToken);
+				if (bitmap is not null)
+				{
+					icons.Add(new LoadedGrindScanDrop(drop, bitmap));
+				}
 			}
-			catch
+			catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 			{
+				throw;
+			}
+			catch (Exception ex)
+			{
+				logger.Warn($"OCR template '{drop.Name}' could not be loaded: {ex.Message}");
 			}
 		}
 
@@ -1745,6 +1903,31 @@ internal sealed class CalculatorForm : Form
 			{
 				icon.Bitmap.Dispose();
 			}
+		}
+	}
+
+	private async Task<Bitmap?> GetCachedGrindIconAsync(string iconPath, CancellationToken cancellationToken)
+	{
+		lock (grindIconCacheSync)
+		{
+			if (grindIconCache.TryGetValue(iconPath, out Bitmap? cached))
+			{
+				return new Bitmap(cached);
+			}
+		}
+
+		cancellationToken.ThrowIfCancellationRequested();
+		using Bitmap source = await LoadBitmapAsync(iconPath, cancellationToken);
+		Bitmap normalized = ResizeBitmap(source, 40);
+		lock (grindIconCacheSync)
+		{
+			if (grindIconCache.TryGetValue(iconPath, out Bitmap? existing))
+			{
+				normalized.Dispose();
+				return new Bitmap(existing);
+			}
+			grindIconCache[iconPath] = normalized;
+			return new Bitmap(normalized);
 		}
 	}
 
@@ -1973,28 +2156,44 @@ internal sealed class CalculatorForm : Form
 			pixels.UnlockBits(data);
 		}
 
-		bool[] mask = new bool[foreground.Length];
+		int[] rowPrefix = new int[width + 1];
 		for (int y = 0; y < height; y++)
 		{
 			cancellationToken.ThrowIfCancellationRequested();
+			rowPrefix[0] = 0;
 			for (int x = 0; x < width; x++)
 			{
-				if (!foreground[(y * width) + x])
-				{
-					continue;
-				}
-				for (int yy = Math.Max(0, y - 3); yy <= Math.Min(height - 1, y + 3); yy++)
-				{
-					int offset = yy * width;
-					for (int xx = Math.Max(0, x - 3); xx <= Math.Min(width - 1, x + 3); xx++)
-					{
-						mask[offset + xx] = true;
-					}
-				}
+				rowPrefix[x + 1] = rowPrefix[x] + (foreground[(y * width) + x] ? 1 : 0);
+			}
+			int rowOffset = y * width;
+			for (int x = 0; x < width; x++)
+			{
+				int left = Math.Max(0, x - 3);
+				int rightExclusive = Math.Min(width, x + 4);
+				foreground[rowOffset + x] = rowPrefix[rightExclusive] > rowPrefix[left];
 			}
 		}
 
-		bool[] seen = new bool[mask.Length];
+		bool[] mask = new bool[foreground.Length];
+		int[] columnPrefix = new int[height + 1];
+		for (int x = 0; x < width; x++)
+		{
+			cancellationToken.ThrowIfCancellationRequested();
+			columnPrefix[0] = 0;
+			for (int y = 0; y < height; y++)
+			{
+				columnPrefix[y + 1] = columnPrefix[y] + (foreground[(y * width) + x] ? 1 : 0);
+			}
+			for (int y = 0; y < height; y++)
+			{
+				int top = Math.Max(0, y - 3);
+				int bottomExclusive = Math.Min(height, y + 4);
+				mask[(y * width) + x] = columnPrefix[bottomExclusive] > columnPrefix[top];
+			}
+		}
+
+		Array.Clear(foreground);
+		bool[] seen = foreground;
 		List<Rectangle> candidates = new();
 		int[] dx = { -1, 0, 1, -1, 1, -1, 0, 1 };
 		int[] dy = { -1, -1, -1, 0, 0, 1, 1, 1 };
@@ -2312,18 +2511,24 @@ internal sealed class CalculatorForm : Form
 		return bitmap;
 	}
 
-	private static async Task<Bitmap> LoadBitmapAsync(string imagePath)
+	private static async Task<Bitmap> LoadBitmapAsync(string imagePath, CancellationToken cancellationToken)
 	{
+		cancellationToken.ThrowIfCancellationRequested();
+		ValidateGrindImageFile(imagePath);
 		try
 		{
 			using Image image = Image.FromFile(imagePath);
+			ValidateGrindImageDimensions(image.Width, image.Height);
+			cancellationToken.ThrowIfCancellationRequested();
 			return new Bitmap(image);
 		}
-		catch
+		catch (Exception ex) when (ex is ArgumentException or OutOfMemoryException or ExternalException or IOException)
 		{
+			cancellationToken.ThrowIfCancellationRequested();
 			StorageFile file = await StorageFile.GetFileFromPathAsync(imagePath);
 			using IRandomAccessStream stream = await file.OpenReadAsync();
 			BitmapDecoder decoder = await BitmapDecoder.CreateAsync(stream);
+			ValidateGrindImageDimensions(decoder.PixelWidth, decoder.PixelHeight);
 			PixelDataProvider pixels = await decoder.GetPixelDataAsync(
 				BitmapPixelFormat.Bgra8,
 				BitmapAlphaMode.Premultiplied,
@@ -2331,6 +2536,7 @@ internal sealed class CalculatorForm : Form
 				ExifOrientationMode.IgnoreExifOrientation,
 				ColorManagementMode.DoNotColorManage);
 			byte[] bytes = pixels.DetachPixelData();
+			cancellationToken.ThrowIfCancellationRequested();
 			Bitmap bitmap = new Bitmap((int)decoder.PixelWidth, (int)decoder.PixelHeight, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
 			System.Drawing.Imaging.BitmapData data = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height), System.Drawing.Imaging.ImageLockMode.WriteOnly, bitmap.PixelFormat);
 			try
@@ -2342,6 +2548,14 @@ internal sealed class CalculatorForm : Form
 				bitmap.UnlockBits(data);
 			}
 			return bitmap;
+		}
+	}
+
+	private static void ValidateGrindImageDimensions(long width, long height)
+	{
+		if (width <= 0 || height <= 0 || width > 16_384 || height > 16_384 || width * height > MaxGrindImagePixels)
+		{
+			throw new InvalidDataException("The screenshot dimensions are too large to process safely.");
 		}
 	}
 

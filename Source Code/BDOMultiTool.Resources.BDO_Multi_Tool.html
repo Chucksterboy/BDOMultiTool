@@ -5,11 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>BDO Multi-Tool</title>
 
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 
-<link rel="stylesheet" href="BDOMultiTool.Resources.BDO_Multi_Tool.css?v=v0.9.16">
+<link rel="stylesheet" href="BDOMultiTool.Resources.BDO_Multi_Tool.css?v=v0.9.17">
 </head>
 
 <body data-mode="dark" data-theme="ocean" data-background="aurora" data-style="fantasy">
@@ -230,7 +227,6 @@
       </div>
       <div class="marketRegionTabs" role="tablist" aria-label="Market region">
         <button class="marketRegionTab active" data-market-region="eu" type="button" role="tab" aria-selected="true">EU</button>
-        <button class="marketRegionTab" data-market-region="na" type="button" role="tab" aria-selected="false">NA</button>
       </div>
       <button id="marketExport" class="marketButton">Export CSV</button>
     </div>
@@ -482,6 +478,15 @@
     </div>
 
     <div class="fontCatalogLayout">
+      <aside class="fontSidebar" aria-label="Font preset filters">
+        <h3>Browse presets</h3>
+        <input id="fontPresetSearch" class="fontSearch" type="search" placeholder="Search fonts..." aria-label="Search font presets" autocomplete="off">
+        <button class="fontCategoryButton active" data-font-category="all" type="button">All fonts</button>
+        <button class="fontCategoryButton" data-font-category="favorites" type="button">Favorites</button>
+        <button class="fontCategoryButton" data-font-category="serif" type="button">Serif</button>
+        <button class="fontCategoryButton" data-font-category="sans" type="button">Sans serif</button>
+        <button class="fontCategoryButton" data-font-category="display" type="button">Display</button>
+      </aside>
       <div>
         <div class="fontSectionHead"><div><h2>Font presets</h2></div></div>
         <div id="fontPresetGallery" class="fontGallery"><div class="fontPresetCard">Loading bundled fonts...</div></div>
@@ -541,14 +546,14 @@
       <div class="couponLiveCard"><div class="couponLiveTop"><span id="couponSourceBadge">CACHED DATA</span><span class="couponLiveSignal"></span></div><div class="couponLiveSync"><span id="couponSyncText">Stored locally</span><i class="couponPulse"></i></div><small id="couponLastUpdated">Last Attempt: &mdash;</small></div>
     </header>
     <section class="couponWorkspace">
-      <div class="couponFilters" style="display:flex;justify-content:flex-end;align-items:center;">
-        <input id="couponSearch" type="hidden" value="" />
-        <select id="couponStatusFilter" hidden><option value="all" selected>All Status</option></select>
-        <select id="couponSort" hidden><option value="newest" selected>Sort: Added (Newest)</option></select>
+      <div class="couponFilters">
+        <input id="couponSearch" type="search" value="" placeholder="Search code or reward..." aria-label="Search coupons" autocomplete="off" />
+        <select id="couponStatusFilter" aria-label="Filter coupon status"><option value="all" selected>All statuses</option><option value="available">Available</option><option value="expired">Expired</option></select>
+        <select id="couponSort" aria-label="Sort coupons"><option value="newest" selected>Newest first</option><option value="oldest">Oldest first</option><option value="code">Code A-Z</option></select>
         <button id="couponRefresh" class="couponRefreshV2">Refresh Coupons</button>
       </div>
       <div id="couponMessage" class="couponMessageV2"></div>
-       <div class="couponContent"><div><div class="couponTabsV2" role="tablist"><button class="active" data-coupon-tab="available" type="button">Available Coupons (<span id="couponAvailableTabCount">0</span>)</button><button data-coupon-tab="redeemed" type="button">Redeemed Coupons (<span id="couponRedeemedCount">0</span>)</button></div><div id="couponRows" class="couponRowsV2"><div class="couponDetailEmpty">Loading coupons...</div></div><div class="couponPagination"><button class="couponPageButton">&lsaquo;</button><button class="couponPageButton">1</button><button class="couponPageButton">&rsaquo;</button></div></div><aside id="couponDetail" class="couponDetail"><div class="couponDetailEmpty">Select a coupon to see its details.</div></aside></div>
+       <div class="couponContent"><div><div class="couponTabsV2" role="tablist"><button class="active" data-coupon-tab="available" type="button">Available Coupons (<span id="couponAvailableTabCount">0</span>)</button><button data-coupon-tab="redeemed" type="button">Redeemed Coupons (<span id="couponRedeemedCount">0</span>)</button><button data-coupon-tab="expired" type="button">Expired (<span id="couponExpiredTabCount">0</span>)</button></div><div id="couponRows" class="couponRowsV2"><div class="couponDetailEmpty">Loading coupons...</div></div><div class="couponPagination"><button id="couponPagePrevious" class="couponPageButton" type="button" aria-label="Previous coupon page">&lsaquo;</button><span id="couponPageStatus" aria-live="polite">Page 1 of 1</span><button id="couponPageNext" class="couponPageButton" type="button" aria-label="Next coupon page">&rsaquo;</button></div></div><aside id="couponDetail" class="couponDetail"><div class="couponDetailEmpty">Select a coupon to see its details.</div></aside></div>
       <footer class="couponBottom"><span class="couponTip">i &nbsp; Tip: New coupons are added automatically when available.</span></footer>
     </section>
     <input id="couponShowExpired" type="checkbox" hidden><span id="couponExpiredCount" hidden>0</span>
@@ -625,42 +630,6 @@
         <div id="grindRecentSessions" class="grindPanelBody grindRecentList"></div>
       </article>
     </section>
-    <section id="grindImportPanel" class="grindImportPanel" aria-label="Import Garmoth sessions">
-      <article class="grindImportIntro">
-        <div>
-          <h2>Import Garmoth Sessions</h2>
-          <p>Select the grind zone first, then screenshot the Garmoth session table for that zone. Make sure the rows, total silver, trash, duration, Agris, and drop rate columns are visible.</p>
-          <div class="grindImportSteps">
-            <span>1. Open one Garmoth grind spot page.</span>
-            <span>2. Screenshot the session table.</span>
-            <span>3. Drop, paste, or add the image here.</span>
-            <span>4. Review each row, edit anything wrong, then save.</span>
-          </div>
-        </div>
-        <figure>
-          <img src="Assets/GrindTracker/examples/garmoth-import-example.png" alt="Example Garmoth grind session screenshot">
-          <figcaption>Example screenshot layout</figcaption>
-        </figure>
-      </article>
-      <article class="grindImportWorkspace">
-        <div class="grindPanelHead"><h2>Review Import</h2><small id="grindImportStatus">No screenshot loaded yet</small></div>
-        <label class="grindImportZone" for="grindImportSpot">
-          <span>Grind zone to import</span>
-          <select id="grindImportSpot"></select>
-        </label>
-        <div id="grindImportDropZone" class="grindImportDropZone">
-          <button id="grindImportPickImage" class="grindSaveButton" type="button">Add Screenshot</button>
-          <span>Drop or paste a Garmoth screenshot, then review the editable rows below.</span>
-        </div>
-        <div id="grindImportPreview" class="grindImportPreview"></div>
-        <div id="grindImportRows" class="grindImportRows"></div>
-        <div class="grindImportActions">
-          <button id="grindImportAddRow" class="grindGhostButton" type="button">+ Add Row</button>
-          <button id="grindImportClear" class="grindGhostButton" type="button">Clear</button>
-          <button id="grindImportSave" class="grindSaveButton" type="button">Save Import</button>
-        </div>
-      </article>
-    </section>
     <section class="grindLowerGrid">
       <article id="grindSpotDetail" class="grindSpotDetail">
         <div class="grindEmpty">Choose a grind zone to see its drops and sessions.</div>
@@ -700,7 +669,7 @@
           <button id="grindSpotPickerClose" class="grindIconButton" type="button" aria-label="Close grind spot picker">X</button>
         </div>
         <div class="grindPickerBody">
-          <input id="grindSpotPickerSearch" class="grindPickerSearch" type="search" placeholder="Search for spot">
+          <input id="grindSpotPickerSearch" class="grindPickerSearch" type="search" placeholder="Search for spot" aria-label="Search grind spots">
           <div class="grindPickerControls" role="group" aria-label="AP and DP display mode">
             <button class="active" data-grind-power-mode="recommended" type="button">Recommended AP / DP</button>
             <button data-grind-power-mode="max" type="button">Max AP / DP</button>
@@ -878,6 +847,7 @@
             <option value="caravan">Desert Caravan</option>
           </select>
           <div class="interfacePreviewGrid" id="interfacePreviewGrid" aria-label="Interface style previews">
+            <button class="interfacePreviewCard" data-interface-preview="custom" type="button" style="--preview-a:#38bdf8;--preview-b:#34d399"><strong>Custom</strong><span>Use the controls below</span></button>
             <button class="interfacePreviewCard" data-interface-preview="fantasy" type="button" style="--preview-a:#d6ad55;--preview-b:#2d1f0b"><strong>Fantasy</strong><span>Ornate gold frame</span></button>
             <button class="interfacePreviewCard" data-interface-preview="cyber" type="button" style="--preview-a:#22d3ee;--preview-b:#180a35"><strong>Cyber</strong><span>Neon circuit glow</span></button>
             <button class="interfacePreviewCard" data-interface-preview="cinematic" type="button" style="--preview-a:#d1b48a;--preview-b:#101827"><strong>Cinematic</strong><span>Dark scenic plates</span></button>
@@ -958,16 +928,30 @@
   </div>
 </section>
 
+<div id="appConfirmOverlay" class="appConfirmOverlay" hidden>
+  <section class="appConfirmDialog" role="alertdialog" aria-modal="true" aria-labelledby="appConfirmTitle" aria-describedby="appConfirmMessage">
+    <h2 id="appConfirmTitle">Confirm action</h2>
+    <p id="appConfirmMessage"></p>
+    <div class="appConfirmActions">
+      <button id="appConfirmCancel" type="button">Cancel</button>
+      <button id="appConfirmAccept" class="danger" type="button">Delete</button>
+    </div>
+  </section>
+</div>
+
 <footer class="appStatusBar">
   <span class="statusLeft"><span class="statusReady">Ready</span><button class="supportHeart" type="button" data-open-url="https://ko-fi.com/chucksterboy" aria-label="Support Me" title="Support Me" data-tooltip="Support Me"><svg class="supportHeartGlyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z"></path></svg><span class="supportHeartLabel">Support Me</span></button></span>
   <span class="statusRight"><span id="couponStatusAlert" class="couponStatusAlert"></span><span id="updateStatusAlert" class="updateStatusAlert" role="button" tabindex="0"></span><span id="appVersionLabel" class="appVersionLabel" title="Application version">v...</span></span>
 </footer>
 
-<script src="Assets/GrindTracker/grind-spots.js?v=v0.9.16"></script>
-<script src="BDOMultiTool.Resources.BDO_Multi_Tool.js?v=v0.9.16"></script>
+<script src="Assets/GrindTracker/grind-spots.js?v=v0.9.17"></script>
+<script src="BDOMultiTool.Resources.BDO_Multi_Tool.js?v=v0.9.17"></script>
 
 </body>
 </html>
+
+
+
 
 
 

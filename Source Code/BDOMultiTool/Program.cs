@@ -45,6 +45,25 @@ internal static class Program
 			Environment.Exit(result);
 			return;
 		}
+		if (args.Any(a => string.Equals(a, "--grind-market-smoke-test", StringComparison.OrdinalIgnoreCase)))
+		{
+			string root = Path.Combine(Path.GetTempPath(), $"bdo-grind-market-smoke-{Guid.NewGuid():N}");
+			AppPaths testPaths = AppPaths.CreateAt(root);
+			testPaths.EnsureDirectories();
+			using AppLogger testLogger = new(testPaths.LogPath);
+			using GrindMarketPriceProvider provider = new(testLogger);
+			GrindMarketPriceResponse response = provider.GetPricesAsync(
+				[16_001, 721_003],
+				"eu",
+				CancellationToken.None).GetAwaiter().GetResult();
+			Console.WriteLine(JsonSerializer.Serialize(response));
+			int result = response.Prices.Count == 2
+				&& response.Prices.All(price => price.Price > 0)
+				&& response.Missing.Count == 0 ? 0 : 61;
+			try { Directory.Delete(root, true); } catch { }
+			Environment.Exit(result);
+			return;
+		}
 		if (args.Any((string a) => string.Equals(a, "--portrait-smoke-test", StringComparison.OrdinalIgnoreCase)))
 		{
 			string text = Path.Combine(Path.GetTempPath(), $"bdo-portrait-app-smoke-{Guid.NewGuid():N}");
@@ -172,7 +191,16 @@ internal static class Program
 					PipeTransmissionMode.Byte,
 					PipeOptions.Asynchronous);
 				await server.WaitForConnectionAsync(cancellationToken);
-				form.RestoreFromExternalLaunch();
+				using StreamReader reader = new(server);
+				string? command = await reader.ReadLineAsync(cancellationToken);
+				if (string.Equals(command, "shutdown-for-update", StringComparison.OrdinalIgnoreCase))
+				{
+					form.ExitForUpdate();
+				}
+				else
+				{
+					form.RestoreFromExternalLaunch();
+				}
 			}
 			catch (OperationCanceledException)
 			{
@@ -411,6 +439,7 @@ internal static class Program
 	private static async Task<int> RunOfflineSmokeTestAsync(AppLogger logger)
 	{
 		string testDatabasePath = Path.Combine(Path.GetTempPath(), $"bdo-market-offline-smoke-{Guid.NewGuid():N}.db");
+		string testStateRoot = Path.Combine(Path.GetTempPath(), $"bdo-state-offline-smoke-{Guid.NewGuid():N}");
 		try
 		{
 			MarketDatabase database = new(testDatabasePath);
@@ -437,7 +466,36 @@ internal static class Program
 			MarketSnapshot outfitSnapshot = new(2_200_000_000, 0, 123, 7, 2_100_000_000, 2_200_000_000, 2_150_000_000, Array.Empty<ProviderHistoryPoint>());
 			await database.SaveOutfitDetailAsync(outfit, outfit, outfitSnapshot, "eu", CancellationToken.None);
 			OutfitReport report = await database.GetOutfitReportAsync("eu", CancellationToken.None);
-			return report.CatalogCount == 1 && report.DetailedCount == 1 && report.Opportunities.Count == 1 ? 0 : 53;
+			if (report.CatalogCount != 1 || report.DetailedCount != 1 || report.Opportunities.Count != 1)
+			{
+				return 53;
+			}
+
+			AppPaths statePaths = AppPaths.CreateAt(testStateRoot);
+			statePaths.EnsureDirectories();
+			AppStateStore stateStore = new(statePaths, logger);
+			JsonElement firstSessions = JsonSerializer.SerializeToElement(new[]
+			{
+				new { id = "session-backup", spotId = "test-spot", minutes = 60 }
+			});
+			JsonElement secondSessions = JsonSerializer.SerializeToElement(new[]
+			{
+				new { id = "session-current", spotId = "test-spot", minutes = 90 }
+			});
+			await stateStore.SaveGrindSessionsAsync(firstSessions, CancellationToken.None);
+			await stateStore.SaveGrindSessionsAsync(secondSessions, CancellationToken.None);
+			await File.WriteAllTextAsync(statePaths.GrindSessionsPath, "{not valid json", CancellationToken.None);
+
+			JsonElement recoveredSessions = await stateStore.LoadGrindSessionsAsync(CancellationToken.None);
+			if (recoveredSessions.GetArrayLength() != 1
+				|| recoveredSessions[0].GetProperty("id").GetString() != "session-backup")
+			{
+				return 54;
+			}
+			JsonElement persistedRecovery = JsonSerializer.Deserialize<JsonElement>(
+				await File.ReadAllTextAsync(statePaths.GrindSessionsPath, CancellationToken.None));
+			return persistedRecovery.GetArrayLength() == 1
+				&& persistedRecovery[0].GetProperty("id").GetString() == "session-backup" ? 0 : 55;
 		}
 		catch (Exception exception)
 		{
@@ -447,6 +505,16 @@ internal static class Program
 		finally
 		{
 			SqliteCleanup(testDatabasePath);
+			try
+			{
+				if (Directory.Exists(testStateRoot))
+				{
+					Directory.Delete(testStateRoot, recursive: true);
+				}
+			}
+			catch
+			{
+			}
 		}
 	}
 
@@ -498,11 +566,42 @@ internal static class Program
 		FileInfo targetInfo = new FileInfo(targetPath);
 		if (targetInfo.Exists
 			&& targetInfo.Length == sourceInfo.Length
-			&& targetInfo.LastWriteTimeUtc >= sourceInfo.LastWriteTimeUtc)
+			&& FilesAreEqual(sourcePath, targetPath))
 		{
 			return;
 		}
 
 		File.Copy(sourcePath, targetPath, overwrite: true);
+	}
+
+	private static bool FilesAreEqual(string firstPath, string secondPath)
+	{
+		const int bufferSize = 64 * 1024;
+		using FileStream first = new(firstPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, FileOptions.SequentialScan);
+		using FileStream second = new(secondPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, FileOptions.SequentialScan);
+		if (first.Length != second.Length)
+		{
+			return false;
+		}
+
+		byte[] firstBuffer = new byte[bufferSize];
+		byte[] secondBuffer = new byte[bufferSize];
+		while (true)
+		{
+			int firstRead = first.Read(firstBuffer, 0, firstBuffer.Length);
+			int secondRead = second.Read(secondBuffer, 0, secondBuffer.Length);
+			if (firstRead != secondRead)
+			{
+				return false;
+			}
+			if (firstRead == 0)
+			{
+				return true;
+			}
+			if (!firstBuffer.AsSpan(0, firstRead).SequenceEqual(secondBuffer.AsSpan(0, secondRead)))
+			{
+				return false;
+			}
+		}
 	}
 }

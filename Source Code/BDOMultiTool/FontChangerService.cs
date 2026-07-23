@@ -21,6 +21,8 @@ internal sealed class FontChangerService
 	public const string InstalledFontName = "pearl.ttf";
 
 	public const string BackupFolderName = "font_BDOMultiToolBackups";
+	private const long MaxFontBytes = 32L * 1024 * 1024;
+	private const int MaxFontBackups = 20;
 
 	private const string PreviewText = "Black Desert Online 1234567890";
 
@@ -55,18 +57,11 @@ internal sealed class FontChangerService
 
 	public async Task<FontChangerSettings> GetSettingsAsync(CancellationToken cancellationToken)
 	{
-		if (!File.Exists(paths.FontChangerSettingsPath))
-		{
-			return EnsureFontFolders(FontChangerSettings.Default);
-		}
-		try
-		{
-			return EnsureFontFolders(JsonSerializer.Deserialize<FontChangerSettings>(await File.ReadAllTextAsync(paths.FontChangerSettingsPath, cancellationToken), JsonOptions) ?? FontChangerSettings.Default);
-		}
-		catch (JsonException)
-		{
-			return EnsureFontFolders(FontChangerSettings.Default);
-		}
+		FontChangerSettings settings = await AtomicFile.ReadJsonAsync<FontChangerSettings>(
+			paths.FontChangerSettingsPath,
+			JsonOptions,
+			cancellationToken) ?? FontChangerSettings.Default;
+		return EnsureFontFolders(settings);
 	}
 
 	public async Task<FontChangerSettings> SaveBdoFolderAsync(string folderPath, CancellationToken cancellationToken)
@@ -74,7 +69,7 @@ internal sealed class FontChangerService
 		string bdoFolder = ValidateBdoFolder(folderPath);
 		GetLayout(bdoFolder, createFontFolder: true);
 		FontChangerSettings settings = new FontChangerSettings(bdoFolder);
-		await File.WriteAllTextAsync(paths.FontChangerSettingsPath, JsonSerializer.Serialize(settings, JsonOptions), cancellationToken);
+		await AtomicFile.WriteAllTextAsync(paths.FontChangerSettingsPath, JsonSerializer.Serialize(settings, JsonOptions), cancellationToken);
 		return settings;
 	}
 
@@ -305,6 +300,7 @@ internal sealed class FontChangerService
 		string value = (string.IsNullOrWhiteSpace(suffix) ? "" : ("_" + suffix));
 		string backupPath = Path.Combine(layout.BackupFolder, $"pearl_{DateTime.Now:yyyy-MM-dd_HHmmssfff}{value}.ttf");
 		await CopyFileAsync(layout.PearlPath, backupPath, cancellationToken);
+		PruneBackups(layout.BackupFolder);
 		return backupPath;
 	}
 
@@ -365,6 +361,11 @@ internal sealed class FontChangerService
 		if (!File.Exists(fullPath) || !string.Equals(Path.GetExtension(fullPath), ".ttf", StringComparison.OrdinalIgnoreCase))
 		{
 			throw new InvalidDataException("Select an existing TrueType .ttf font file.");
+		}
+		long length = new FileInfo(fullPath).Length;
+		if (length <= 0 || length > MaxFontBytes)
+		{
+			throw new InvalidDataException("Select a TrueType font smaller than 32 MB.");
 		}
 		try
 		{
@@ -476,6 +477,23 @@ internal sealed class FontChangerService
 			return true;
 		}
 		return false;
+	}
+
+	private static void PruneBackups(string backupFolder)
+	{
+		try
+		{
+			foreach (string stale in Directory
+				.EnumerateFiles(backupFolder, "pearl_*.ttf", SearchOption.TopDirectoryOnly)
+				.OrderByDescending(File.GetLastWriteTimeUtc)
+				.Skip(MaxFontBackups))
+			{
+				TryDelete(stale);
+			}
+		}
+		catch
+		{
+		}
 	}
 
 	private static void TryDelete(string path)

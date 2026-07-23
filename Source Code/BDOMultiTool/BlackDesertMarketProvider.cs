@@ -16,6 +16,7 @@ internal sealed class BlackDesertMarketProvider : IMarketDataProvider, IDisposab
 {
 	private const string BaseUrl = "https://api.blackdesertmarket.com";
 	private const int MaxAttempts = 2;
+	private const long MaxResponseBytes = 8 * 1024 * 1024;
 	private const int CircuitFailureThreshold = 3;
 	private static readonly TimeSpan CircuitBreakDuration = TimeSpan.FromMinutes(10);
 
@@ -33,9 +34,10 @@ internal sealed class BlackDesertMarketProvider : IMarketDataProvider, IDisposab
 		this.logger = logger;
 		client = new HttpClient
 		{
-			Timeout = TimeSpan.FromSeconds(25.0)
+			Timeout = TimeSpan.FromSeconds(25.0),
+			MaxResponseContentBufferSize = MaxResponseBytes
 		};
-		client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("BDO-Multi-Tool", "1.0"));
+		client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("BDO-Multi-Tool", AppVersion.Current.TrimStart('v', 'V')));
 		client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 	}
 
@@ -75,19 +77,19 @@ internal sealed class BlackDesertMarketProvider : IMarketDataProvider, IDisposab
 		using JsonDocument jsonDocument = await GetJsonWithRetryAsync(url, cancellationToken);
 		JsonElement property = jsonDocument.RootElement.GetProperty("data");
 		JsonElement[] source = property.GetProperty("availability").EnumerateArray().ToArray();
-		var array = (from x in source
-			where GetInt64(x, "sellCount") > 0 || GetInt64(x, "buyCount") > 0
+		var sellOrders = (from x in source
+			where GetInt64(x, "sellCount") > 0
 			select new
 			{
 				Price = GetInt64(x, "onePrice"),
-				Weight = Math.Max(1L, GetInt64(x, "sellCount") + GetInt64(x, "buyCount"))
+				Weight = Math.Max(1L, GetInt64(x, "sellCount"))
 			}).ToArray();
 		long preorderCount = source.Sum((JsonElement x) => GetInt64(x, "buyCount"));
 		long @int = GetInt64(property, "basePrice");
-		long orderBookMin = ((array.Length == 0) ? @int : array.Min(x => x.Price));
-		long orderBookMax = ((array.Length == 0) ? @int : array.Max(x => x.Price));
-		double num = array.Sum(x => (double)x.Weight);
-		double orderBookAverage = ((num <= 0.0) ? ((double)@int) : (array.Sum(x => (double)x.Price * (double)x.Weight) / num));
+		long orderBookMin = ((sellOrders.Length == 0) ? @int : sellOrders.Min(x => x.Price));
+		long orderBookMax = ((sellOrders.Length == 0) ? @int : sellOrders.Max(x => x.Price));
+		double num = sellOrders.Sum(x => (double)x.Weight);
+		double orderBookAverage = ((num <= 0.0) ? ((double)@int) : (sellOrders.Sum(x => (double)x.Price * (double)x.Weight) / num));
 		List<ProviderHistoryPoint> list = new List<ProviderHistoryPoint>();
 		if (property.TryGetProperty("history", out var value))
 		{
@@ -132,8 +134,17 @@ internal sealed class BlackDesertMarketProvider : IMarketDataProvider, IDisposab
 					throw;
 				}
 				lastError = ex;
-				bool serverFailure = ex is HttpRequestException { StatusCode: >= HttpStatusCode.InternalServerError };
-				if (serverFailure || attempt >= MaxAttempts)
+				bool shouldRetry = ex switch
+				{
+					HttpRequestException { StatusCode: HttpStatusCode.TooManyRequests } => true,
+					HttpRequestException { StatusCode: >= HttpStatusCode.InternalServerError } => true,
+					HttpRequestException { StatusCode: null } => true,
+					TaskCanceledException => true,
+					JsonException => true,
+					InvalidDataException => true,
+					_ => false
+				};
+				if (!shouldRetry || attempt >= MaxAttempts)
 				{
 					break;
 				}

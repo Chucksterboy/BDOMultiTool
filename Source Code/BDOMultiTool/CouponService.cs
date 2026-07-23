@@ -15,9 +15,11 @@ internal sealed class CouponService : IDisposable
 {
 	private const string SourceUrl = "https://api.bdoalerts.net/api/coupons";
 	private const string OfficialSourceUrl = "https://www.naeu.playblackdesert.com/en-US/News/Detail?groupContentNo=5676";
+	private const long MaxResponseBytes = 8 * 1024 * 1024;
 	private readonly AppPaths paths;
 	private readonly AppLogger logger;
 	private readonly HttpClient http;
+	private readonly Dictionary<string, (DateTime LastWriteUtc, long Length, string DataUrl)> iconDataCache = new(StringComparer.OrdinalIgnoreCase);
 	private static readonly JsonSerializerOptions JsonOptions = new()
 	{
 		PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -29,7 +31,11 @@ internal sealed class CouponService : IDisposable
 	{
 		this.paths = paths;
 		this.logger = logger;
-		http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+		http = new HttpClient
+		{
+			Timeout = TimeSpan.FromSeconds(20),
+			MaxResponseContentBufferSize = MaxResponseBytes
+		};
 		http.DefaultRequestHeaders.UserAgent.ParseAdd("BDO-Multi-Tool/2.7 (+local read-only coupon tracker)");
 		http.DefaultRequestHeaders.Referrer = new Uri("https://bdoalerts.net/coupons/");
 		http.DefaultRequestHeaders.TryAddWithoutValidation("Origin", "https://bdoalerts.net");
@@ -81,6 +87,10 @@ internal sealed class CouponService : IDisposable
 					logger.Warn(officialFailure);
 				}
 			}
+			catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+			{
+				throw;
+			}
 			catch (Exception ex)
 			{
 				officialFailure = "Official BDO source could not be read: " + ex.Message;
@@ -96,6 +106,18 @@ internal sealed class CouponService : IDisposable
 				string failure = statusCode == 403
 					? "Live refresh blocked by BDO Alerts: HTTP 403. Showing cached data."
 					: $"Live coupon refresh failed: HTTP {statusCode}. Showing cached data.";
+				if (officialCoupons.Count > 0)
+				{
+					CouponCache? existing = await ReadJsonAsync<CouponCache>(paths.CouponsCachePath, cancellationToken);
+					List<CouponEntry> merged = MergeCouponSources(officialCoupons, existing?.Coupons ?? []);
+					int officialIcons = await CacheIconsAsync(merged, cancellationToken);
+					CouponCache officialCache = new(DateTimeOffset.UtcNow, "Official BDO", merged, failure);
+					await WriteJsonAsync(paths.CouponsCachePath, officialCache, cancellationToken);
+					cacheUpdated = true;
+					LogSummary(merged, officialIcons, "Official BDO");
+					return await BuildDashboardAsync("LIVE", failure, cancellationToken, attemptTime,
+						new CouponRefreshDebug(OfficialSourceUrl, statusCode, officialLength, officialCoupons.Count, true, true, failure));
+				}
 				logger.Info("Coupons parsing succeeded: no (HTTP request was rejected).");
 				logger.Info("Coupons parsed: 0.");
 				logger.Info("Coupons cache updated: no.");
@@ -119,6 +141,10 @@ internal sealed class CouponService : IDisposable
 			LogSummary(coupons, icons, "LIVE");
 			return await BuildDashboardAsync("LIVE", null, cancellationToken, attemptTime,
 				new CouponRefreshDebug($"{OfficialSourceUrl} + {SourceUrl}", statusCode, html.Length + officialLength, coupons.Count, true, true, officialFailure));
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			throw;
 		}
 		catch (Exception ex)
 		{
@@ -182,13 +208,14 @@ internal sealed class CouponService : IDisposable
 
 	private async Task EnsureSeedCacheAsync(CancellationToken cancellationToken)
 	{
-		if (!File.Exists(paths.CouponsCachePath))
+		CouponCache? existing = await ReadJsonAsync<CouponCache>(paths.CouponsCachePath, cancellationToken);
+		if (existing is null)
 		{
 			CouponCache seed = new(DateTimeOffset.UtcNow, "Cached", SeedCoupons(), "Seed cache created from the last publicly verified coupon listing.");
 			await WriteJsonAsync(paths.CouponsCachePath, seed, cancellationToken);
 			logger.Info($"Coupon seed cache created with {seed.Coupons.Count} entries.");
 		}
-		if (!File.Exists(paths.CouponSettingsPath))
+		if (await ReadJsonAsync<CouponSettings>(paths.CouponSettingsPath, cancellationToken) is null)
 			await WriteJsonAsync(paths.CouponSettingsPath, new CouponSettings(true, true, "", "all"), cancellationToken);
 	}
 
@@ -379,6 +406,10 @@ internal sealed class CouponService : IDisposable
 					count++;
 				}
 			}
+			catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+			{
+				throw;
+			}
 			catch (Exception ex)
 			{
 				logger.Warn($"Coupon icon could not be cached ({uri}): {ex.Message}");
@@ -394,9 +425,16 @@ internal sealed class CouponService : IDisposable
 			string path = Path.Combine(paths.CouponIconsPath, Path.GetFileName(fileName));
 			if (File.Exists(path))
 			{
+				FileInfo info = new(path);
+				if (iconDataCache.TryGetValue(path, out var cached)
+					&& cached.LastWriteUtc == info.LastWriteTimeUtc
+					&& cached.Length == info.Length)
+					return cached.DataUrl;
 				string extension = Path.GetExtension(path).ToLowerInvariant();
 				string mime = extension == ".png" ? "image/png" : extension is ".jpg" or ".jpeg" ? "image/jpeg" : "image/webp";
-				return $"data:{mime};base64,{Convert.ToBase64String(File.ReadAllBytes(path))}";
+				string dataUrl = $"data:{mime};base64,{Convert.ToBase64String(File.ReadAllBytes(path))}";
+				iconDataCache[path] = (info.LastWriteTimeUtc, info.Length, dataUrl);
+				return dataUrl;
 			}
 		}
 		return "data:image/svg+xml;charset=utf-8," + Uri.EscapeDataString("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'><defs><linearGradient id='g' x2='1' y2='1'><stop stop-color='#e2ae43'/><stop offset='1' stop-color='#6f2b16'/></linearGradient></defs><rect x='3' y='3' width='42' height='42' rx='7' fill='#24080a' stroke='#b97729'/><path d='M14 17h20v19H14zM12 13h24v7H12zm12 0v23M18 13c-5-5 5-9 6 0m6 0c5-5-5-9-6 0' fill='none' stroke='url(#g)' stroke-width='2'/></svg>");
@@ -407,21 +445,59 @@ internal sealed class CouponService : IDisposable
 		logger.Info($"Coupons source: {source}; found: {coupons.Count}; available: {coupons.Count(c => !c.IsExpired)}; expired: {coupons.Count(c => c.IsExpired)}; icons loaded: {icons}; refreshed: {DateTimeOffset.Now:O}");
 	}
 
-	private static async Task<T?> ReadJsonAsync<T>(string path, CancellationToken cancellationToken)
+	private async Task<T?> ReadJsonAsync<T>(string path, CancellationToken cancellationToken)
 	{
 		if (!File.Exists(path))
 			return default;
-		await using FileStream stream = File.OpenRead(path);
-		return await JsonSerializer.DeserializeAsync<T>(stream, JsonOptions, cancellationToken);
+		try
+		{
+			await using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+			return await JsonSerializer.DeserializeAsync<T>(stream, JsonOptions, cancellationToken);
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			throw;
+		}
+		catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+		{
+			logger.Warn($"Ignoring unreadable coupon data '{Path.GetFileName(path)}': {ex.Message}");
+			try
+			{
+				File.Move(path, path + $".corrupt-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}", overwrite: true);
+			}
+			catch (Exception quarantineError)
+			{
+				logger.Warn($"Could not quarantine invalid coupon data '{Path.GetFileName(path)}': {quarantineError.Message}");
+			}
+			return default;
+		}
 	}
 
 	private static async Task WriteJsonAsync<T>(string path, T value, CancellationToken cancellationToken)
 	{
 		Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-		string temporary = path + ".tmp";
-		await using (FileStream stream = File.Create(temporary))
-			await JsonSerializer.SerializeAsync(stream, value, JsonOptions, cancellationToken);
-		File.Move(temporary, path, true);
+		string temporary = path + $".{Guid.NewGuid():N}.tmp";
+		try
+		{
+			await using (FileStream stream = new(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+			{
+				await JsonSerializer.SerializeAsync(stream, value, JsonOptions, cancellationToken);
+				await stream.FlushAsync(cancellationToken);
+				stream.Flush(flushToDisk: true);
+			}
+			File.Move(temporary, path, overwrite: true);
+		}
+		finally
+		{
+			try
+			{
+				if (File.Exists(temporary))
+					File.Delete(temporary);
+			}
+			catch
+			{
+			}
+		}
 	}
 
 	public void Dispose() => http.Dispose();

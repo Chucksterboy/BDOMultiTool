@@ -18,6 +18,9 @@ internal sealed class PortraitReplacerService
 	public const int OutputHeight = 804;
 
 	public const string BackupFolderName = "_BDOMultiToolBackups";
+	private const long MaxSourceImageBytes = 30L * 1024 * 1024;
+	private const long MaxSourceImagePixels = 24_000_000;
+	private const int MaxBackupsPerPortrait = 20;
 
 	private readonly AppPaths paths;
 
@@ -37,25 +40,17 @@ internal sealed class PortraitReplacerService
 
 	public async Task<PortraitSettings> GetSettingsAsync(CancellationToken cancellationToken)
 	{
-		if (!File.Exists(paths.PortraitSettingsPath))
-		{
-			return PortraitSettings.Default;
-		}
-		try
-		{
-			return JsonSerializer.Deserialize<PortraitSettings>(await File.ReadAllTextAsync(paths.PortraitSettingsPath, cancellationToken), JsonOptions) ?? PortraitSettings.Default;
-		}
-		catch (JsonException)
-		{
-			return PortraitSettings.Default;
-		}
+		return await AtomicFile.ReadJsonAsync<PortraitSettings>(
+			paths.PortraitSettingsPath,
+			JsonOptions,
+			cancellationToken) ?? PortraitSettings.Default;
 	}
 
 	public async Task<PortraitSettings> SaveFaceTextureFolderAsync(string folderPath, CancellationToken cancellationToken)
 	{
 		string faceTextureFolder = ValidateFolder(folderPath);
 		PortraitSettings settings = new PortraitSettings(faceTextureFolder);
-		await File.WriteAllTextAsync(paths.PortraitSettingsPath, JsonSerializer.Serialize(settings, JsonOptions), cancellationToken);
+		await AtomicFile.WriteAllTextAsync(paths.PortraitSettingsPath, JsonSerializer.Serialize(settings, JsonOptions), cancellationToken);
 		return settings;
 	}
 
@@ -95,6 +90,7 @@ internal sealed class PortraitReplacerService
 			VerifyOutput(temporaryPath);
 			await CopyFileAsync(oldPath, backupPath, cancellationToken);
 			File.Replace(temporaryPath, oldPath, null, ignoreMetadataErrors: true);
+			PruneBackups(backupFolder, oldPath);
 			return new
 			{
 				replaced = true,
@@ -144,6 +140,7 @@ internal sealed class PortraitReplacerService
 			await CopyFileAsync(latestBackup, temporaryPath, cancellationToken);
 			VerifyOutput(temporaryPath);
 			File.Replace(temporaryPath, oldPath, null, ignoreMetadataErrors: true);
+			PruneBackups(text2, oldPath);
 			return new
 			{
 				restored = true,
@@ -246,6 +243,10 @@ internal sealed class PortraitReplacerService
 		{
 			using FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 			using Image original = Image.FromStream(stream, useEmbeddedColorManagement: true, validateImageData: true);
+			if ((long)original.Width * original.Height > MaxSourceImagePixels)
+			{
+				throw new InvalidDataException("The selected image dimensions are too large to process safely.");
+			}
 			return new Bitmap(original);
 		}
 		catch (OutOfMemoryException innerException)
@@ -285,6 +286,11 @@ internal sealed class PortraitReplacerService
 		{
 			throw new FileNotFoundException("The selected image no longer exists.", fullPath);
 		}
+		long length = new FileInfo(fullPath).Length;
+		if (length <= 0 || length > MaxSourceImageBytes)
+		{
+			throw new InvalidDataException("Use an image smaller than 30 MB.");
+		}
 		string text = Path.GetExtension(fullPath).ToLowerInvariant();
 		bool flag;
 		switch (text)
@@ -321,6 +327,24 @@ internal sealed class PortraitReplacerService
 		string extension = Path.GetExtension(oldPath);
 		string value = (string.IsNullOrWhiteSpace(suffix) ? "" : ("_" + suffix));
 		return Path.Combine(backupFolder, $"{fileNameWithoutExtension}_{timestamp:yyyy-MM-dd_HHmmssfff}{value}{extension}");
+	}
+
+	private static void PruneBackups(string backupFolder, string oldPath)
+	{
+		try
+		{
+			string pattern = Path.GetFileNameWithoutExtension(oldPath) + "_*" + Path.GetExtension(oldPath);
+			foreach (string stale in Directory
+				.EnumerateFiles(backupFolder, pattern, SearchOption.TopDirectoryOnly)
+				.OrderByDescending(File.GetLastWriteTimeUtc)
+				.Skip(MaxBackupsPerPortrait))
+			{
+				TryDelete(stale);
+			}
+		}
+		catch
+		{
+		}
 	}
 
 	private static async Task CopyFileAsync(string source, string destination, CancellationToken cancellationToken)

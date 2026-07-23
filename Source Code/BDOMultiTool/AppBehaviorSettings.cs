@@ -18,25 +18,15 @@ internal sealed record AppBehaviorSettings(bool MinimizeToTray)
 
 	public static async Task<AppBehaviorSettings> LoadAsync(AppPaths paths, CancellationToken cancellationToken)
 	{
-		try
-		{
-			if (!File.Exists(paths.AppBehaviorSettingsPath))
-				return Default;
-
-			return JsonSerializer.Deserialize<AppBehaviorSettings>(
-				await File.ReadAllTextAsync(paths.AppBehaviorSettingsPath, cancellationToken),
-				JsonOptions) ?? Default;
-		}
-		catch
-		{
-			return Default;
-		}
+		return await AtomicFile.ReadJsonAsync<AppBehaviorSettings>(
+			paths.AppBehaviorSettingsPath,
+			JsonOptions,
+			cancellationToken) ?? Default;
 	}
 
 	public static async Task<AppBehaviorSettings> SaveAsync(AppPaths paths, AppBehaviorSettings settings, CancellationToken cancellationToken)
 	{
-		Directory.CreateDirectory(paths.Root);
-		await File.WriteAllTextAsync(paths.AppBehaviorSettingsPath, JsonSerializer.Serialize(settings, JsonOptions), cancellationToken);
+		await AtomicFile.WriteAllTextAsync(paths.AppBehaviorSettingsPath, JsonSerializer.Serialize(settings, JsonOptions), cancellationToken);
 		return settings;
 	}
 }

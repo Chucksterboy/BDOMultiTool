@@ -20,7 +20,9 @@ internal sealed record AppPaths(string Root, string HtmlPath, string DatabasePat
 		"events_cache.backup.json",
 		"portrait-replacer-settings.json",
 		"font-changer-settings.json",
-		"app-behavior-settings.json"
+		"app-behavior-settings.json",
+		"grind-sessions.json",
+		"grind-sessions.backup.json"
 	];
 
 	public string CouponsCachePath => Path.Combine(Root, "coupons_cache.json");
@@ -34,6 +36,8 @@ internal sealed record AppPaths(string Root, string HtmlPath, string DatabasePat
 	public string MasteryIconsPath => Path.Combine(Root, "Assets", "MasteryIcons");
 	public string FontGuidePath => Path.Combine(Root, "Assets", "FontGuide");
 	public string AppBehaviorSettingsPath => Path.Combine(Root, "app-behavior-settings.json");
+	public string GrindSessionsPath => Path.Combine(Root, "grind-sessions.json");
+	public string GrindSessionsBackupPath => Path.Combine(Root, "grind-sessions.backup.json");
 
 	public static AppPaths Create()
 	{

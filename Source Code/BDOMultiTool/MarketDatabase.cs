@@ -12,10 +12,13 @@ namespace BDOMultiTool;
 
 internal sealed class MarketDatabase
 {
+	private const int CurrentSchemaVersion = 2;
+
 	private readonly string connectionString;
 
 	public MarketDatabase(string path)
 	{
+		DatabasePath = path;
 		connectionString = new SqliteConnectionStringBuilder
 		{
 			DataSource = path,
@@ -24,13 +27,53 @@ internal sealed class MarketDatabase
 		}.ToString();
 	}
 
+	private string DatabasePath { get; }
+
 	public async Task InitializeAsync(CancellationToken cancellationToken)
 	{
 		await using SqliteConnection connection = await OpenAsync(cancellationToken);
+		int schemaVersion = await GetSchemaVersionAsync(connection, cancellationToken);
+		if (schemaVersion < CurrentSchemaVersion)
+		{
+			await BackupBeforeMigrationAsync(connection, schemaVersion, cancellationToken);
+		}
 		string commandText = "PRAGMA journal_mode=WAL;\nPRAGMA foreign_keys=ON;\nCREATE TABLE IF NOT EXISTS settings (\n    key TEXT PRIMARY KEY,\n    value TEXT NOT NULL\n);\nCREATE TABLE IF NOT EXISTS tracked_items (\n    item_id INTEGER NOT NULL,\n    enhancement INTEGER NOT NULL,\n    region TEXT NOT NULL,\n    name TEXT NOT NULL,\n    grade INTEGER NOT NULL,\n    main_category INTEGER NOT NULL DEFAULT 0,\n    sub_category INTEGER NOT NULL DEFAULT 0,\n    created_utc TEXT NOT NULL,\n    last_price INTEGER,\n    last_stock INTEGER,\n    last_trade_count INTEGER,\n    last_updated_utc TEXT,\n    PRIMARY KEY (item_id, enhancement, region)\n);\nCREATE TABLE IF NOT EXISTS snapshots (\n    snapshot_id INTEGER PRIMARY KEY AUTOINCREMENT,\n    item_id INTEGER NOT NULL,\n    enhancement INTEGER NOT NULL,\n    region TEXT NOT NULL,\n    captured_utc TEXT NOT NULL,\n    price INTEGER NOT NULL,\n    stock INTEGER,\n    trade_count INTEGER,\n    order_book_min INTEGER,\n    order_book_max INTEGER,\n    order_book_average REAL,\n    source TEXT NOT NULL,\n    UNIQUE(item_id, enhancement, region, captured_utc, source)\n);\nCREATE INDEX IF NOT EXISTS ix_snapshots_item_time\n    ON snapshots(item_id, enhancement, region, captured_utc);\nCREATE INDEX IF NOT EXISTS ix_snapshots_region_item_time\n    ON snapshots(region, item_id, enhancement, captured_utc DESC);\nCREATE TABLE IF NOT EXISTS outfit_catalog (\n    item_id INTEGER NOT NULL,\n    region TEXT NOT NULL,\n    name TEXT NOT NULL,\n    grade INTEGER NOT NULL,\n    sub_category INTEGER NOT NULL,\n    price INTEGER NOT NULL,\n    stock INTEGER NOT NULL,\n    last_catalog_sync_utc TEXT NOT NULL,\n    last_detailed_utc TEXT,\n    PRIMARY KEY(item_id, region)\n);\nCREATE TABLE IF NOT EXISTS outfit_snapshots (\n    snapshot_id INTEGER PRIMARY KEY AUTOINCREMENT,\n    item_id INTEGER NOT NULL,\n    region TEXT NOT NULL,\n    captured_utc TEXT NOT NULL,\n    price INTEGER NOT NULL,\n    stock INTEGER NOT NULL,\n    trade_count INTEGER,\n    preorder_count INTEGER,\n    source TEXT NOT NULL\n);\nCREATE INDEX IF NOT EXISTS ix_outfit_snapshots_item_time\n    ON outfit_snapshots(item_id, region, captured_utc);\nCREATE INDEX IF NOT EXISTS ix_outfit_snapshots_region_item_time\n    ON outfit_snapshots(region, item_id, captured_utc DESC);";
 		await using SqliteCommand command = connection.CreateCommand();
 		command.CommandText = commandText;
 		await command.ExecuteNonQueryAsync(cancellationToken);
+		await using SqliteCommand versionCommand = connection.CreateCommand();
+		versionCommand.CommandText = $"PRAGMA user_version={CurrentSchemaVersion};";
+		await versionCommand.ExecuteNonQueryAsync(cancellationToken);
+	}
+
+	private static async Task<int> GetSchemaVersionAsync(SqliteConnection connection, CancellationToken cancellationToken)
+	{
+		await using SqliteCommand command = connection.CreateCommand();
+		command.CommandText = "PRAGMA user_version;";
+		object? value = await command.ExecuteScalarAsync(cancellationToken);
+		return value == null || value == DBNull.Value ? 0 : Convert.ToInt32(value);
+	}
+
+	private async Task BackupBeforeMigrationAsync(SqliteConnection source, int schemaVersion, CancellationToken cancellationToken)
+	{
+		if (!File.Exists(DatabasePath) || new FileInfo(DatabasePath).Length == 0)
+		{
+			return;
+		}
+
+		string backupPath = DatabasePath + $".pre-v{CurrentSchemaVersion}-from-v{schemaVersion}.bak";
+		if (File.Exists(backupPath))
+		{
+			return;
+		}
+
+		await using SqliteConnection destination = new(new SqliteConnectionStringBuilder
+		{
+			DataSource = backupPath,
+			Mode = SqliteOpenMode.ReadWriteCreate
+		}.ToString());
+		await destination.OpenAsync(cancellationToken);
+		source.BackupDatabase(destination);
 	}
 
 	public async Task<MarketSettings> GetSettingsAsync(CancellationToken cancellationToken)
@@ -167,6 +210,36 @@ SELECT MAX(captured_utc) FROM (
 			}
 		}
 		return latest;
+	}
+
+	public async Task<bool> IsMarketRefreshDueAsync(string region, TimeSpan maximumAge, CancellationToken cancellationToken)
+	{
+		DateTimeOffset cutoff = DateTimeOffset.UtcNow.Subtract(maximumAge);
+		await using SqliteConnection connection = await OpenAsync(cancellationToken);
+		await using SqliteCommand command = connection.CreateCommand();
+		command.CommandText = @"
+SELECT CASE
+    WHEN NOT EXISTS (
+        SELECT 1 FROM outfit_catalog WHERE region=$region
+    ) THEN 1
+    WHEN EXISTS (
+        SELECT 1
+        FROM outfit_catalog
+        WHERE region=$region
+          AND (last_catalog_sync_utc IS NULL OR last_catalog_sync_utc <= $cutoff)
+    ) THEN 1
+    WHEN EXISTS (
+        SELECT 1
+        FROM tracked_items
+        WHERE region=$region
+          AND (last_updated_utc IS NULL OR last_updated_utc <= $cutoff)
+    ) THEN 1
+    ELSE 0
+END;";
+		command.Parameters.AddWithValue("$region", NormalizeRegion(region));
+		command.Parameters.AddWithValue("$cutoff", cutoff.ToString("O"));
+		object? value = await command.ExecuteScalarAsync(cancellationToken);
+		return Convert.ToInt32(value ?? 1) != 0;
 	}
 
 	public async Task SaveSnapshotAsync(TrackedItem item, MarketItem variant, MarketSnapshot snapshot, CancellationToken cancellationToken)
@@ -311,7 +384,21 @@ SELECT MAX(captured_utc) FROM (
 			}
 			await using SqliteCommand snapshot = connection.CreateCommand();
 			snapshot.Transaction = (SqliteTransaction)transaction;
-			snapshot.CommandText = "INSERT INTO outfit_snapshots(\n    item_id,region,captured_utc,price,stock,trade_count,preorder_count,source)\nVALUES($id,$region,$captured,$price,$stock,NULL,NULL,'catalog');";
+			snapshot.CommandText = @"
+INSERT INTO outfit_snapshots(
+    item_id,region,captured_utc,price,stock,trade_count,preorder_count,source)
+SELECT $id,$region,$captured,$price,$stock,NULL,NULL,'catalog'
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM (
+        SELECT price,stock
+        FROM outfit_snapshots
+        WHERE item_id=$id AND region=$region AND source='catalog'
+        ORDER BY captured_utc DESC
+        LIMIT 1
+    ) latest
+    WHERE latest.price=$price AND latest.stock=$stock
+);";
 			snapshot.Parameters.AddWithValue("$id", item.ItemId);
 			snapshot.Parameters.AddWithValue("$region", region);
 			snapshot.Parameters.AddWithValue("$captured", now.ToString("O"));

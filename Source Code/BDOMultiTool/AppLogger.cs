@@ -18,11 +18,12 @@ internal sealed class AppLogger : IDisposable
 	public AppLogger(string path)
 	{
 		this.path = path;
-		entries = Channel.CreateUnbounded<string>(new UnboundedChannelOptions
+		entries = Channel.CreateBounded<string>(new BoundedChannelOptions(2048)
 		{
 			SingleReader = true,
 			SingleWriter = false,
-			AllowSynchronousContinuations = false
+			AllowSynchronousContinuations = false,
+			FullMode = BoundedChannelFullMode.DropOldest
 		});
 		writerTask = Task.Run(WriteLoopAsync);
 	}

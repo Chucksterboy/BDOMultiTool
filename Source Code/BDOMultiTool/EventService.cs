@@ -15,6 +15,7 @@ namespace BDOMultiTool;
 internal sealed class EventService : IDisposable
 {
 	internal const string OfficialEventsUrl = "https://www.naeu.playblackdesert.com/en-US/News/Notice?boardType=3&progressType=1";
+	private const long MaxResponseBytes = 8 * 1024 * 1024;
 	private static readonly Uri SiteRoot = new("https://www.naeu.playblackdesert.com");
 	private readonly AppPaths paths;
 	private readonly AppLogger logger;
@@ -31,7 +32,11 @@ internal sealed class EventService : IDisposable
 	{
 		this.paths = paths;
 		this.logger = logger;
-		http = new HttpClient { Timeout = TimeSpan.FromSeconds(25) };
+		http = new HttpClient
+		{
+			Timeout = TimeSpan.FromSeconds(25),
+			MaxResponseContentBufferSize = MaxResponseBytes
+		};
 		http.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36 BDO-Multi-Tool");
 		http.DefaultRequestHeaders.Referrer = new Uri("https://www.naeu.playblackdesert.com/en-US/News/Notice");
 	}
@@ -58,6 +63,10 @@ internal sealed class EventService : IDisposable
 			logger.Info("Events official source URL: " + OfficialEventsUrl);
 			string html = await GetStringAsync(OfficialEventsUrl, cancellationToken);
 			return await BuildAndCacheDashboardAsync(html, attemptTime, enrichDetails: true, cancellationToken);
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			throw;
 		}
 		catch (Exception ex)
 		{
@@ -449,19 +458,65 @@ internal sealed class EventService : IDisposable
 		return value[..Math.Max(0, max - 1)].TrimEnd() + "...";
 	}
 
-	private static async Task<T?> ReadJsonAsync<T>(string path, CancellationToken cancellationToken)
+	private async Task<T?> ReadJsonAsync<T>(string path, CancellationToken cancellationToken)
 	{
 		if (!File.Exists(path))
 			return default;
-		await using FileStream stream = File.OpenRead(path);
-		return await JsonSerializer.DeserializeAsync<T>(stream, JsonOptions, cancellationToken);
+		try
+		{
+			await using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+			return await JsonSerializer.DeserializeAsync<T>(stream, JsonOptions, cancellationToken);
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			throw;
+		}
+		catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+		{
+			logger.Warn($"Ignoring unreadable Events cache '{Path.GetFileName(path)}': {ex.Message}");
+			QuarantineInvalidCache(path);
+			return default;
+		}
 	}
 
 	private static async Task WriteJsonAsync<T>(string path, T value, CancellationToken cancellationToken)
 	{
 		Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-		await using FileStream stream = File.Create(path);
-		await JsonSerializer.SerializeAsync(stream, value, JsonOptions, cancellationToken);
+		string temporary = path + $".{Guid.NewGuid():N}.tmp";
+		try
+		{
+			await using (FileStream stream = new(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+			{
+				await JsonSerializer.SerializeAsync(stream, value, JsonOptions, cancellationToken);
+				await stream.FlushAsync(cancellationToken);
+				stream.Flush(flushToDisk: true);
+			}
+			File.Move(temporary, path, overwrite: true);
+		}
+		finally
+		{
+			try
+			{
+				if (File.Exists(temporary))
+					File.Delete(temporary);
+			}
+			catch
+			{
+			}
+		}
+	}
+
+	private void QuarantineInvalidCache(string path)
+	{
+		try
+		{
+			string quarantine = path + $".corrupt-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
+			File.Move(path, quarantine, overwrite: true);
+		}
+		catch (Exception ex)
+		{
+			logger.Warn($"Could not quarantine invalid Events cache '{Path.GetFileName(path)}': {ex.Message}");
+		}
 	}
 
 	public void Dispose() => http.Dispose();

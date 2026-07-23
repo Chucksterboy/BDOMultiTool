@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.IO.Compression;
+using System.IO.Pipes;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -40,6 +41,7 @@ internal static class Program
 internal sealed class InstallerForm : Form
 {
 	private const string MarketCollectorTaskName = "BDO Multi-Tool Market Collector";
+	private const string SingleInstancePipeName = "BDOMultiTool.SingleInstance.Restore";
 
 	private readonly CheckBox desktopShortcut;
 	private readonly Button installButton;
@@ -281,7 +283,8 @@ internal sealed class InstallerForm : Form
 
 	private void CloseRunningInstalledApp()
 	{
-		DateTime deadline = DateTime.UtcNow.AddSeconds(12);
+		RequestGracefulAppShutdown();
+		DateTime deadline = DateTime.UtcNow.AddSeconds(20);
 		Exception lastError = null;
 		do
 		{
@@ -296,12 +299,7 @@ internal sealed class InstallerForm : Form
 					try
 					{
 						process.CloseMainWindow();
-						if (!process.WaitForExit(1500))
-						{
-							process.Kill(entireProcessTree: true);
-							if (!process.WaitForExit(5000))
-								throw new InvalidOperationException($"BDO Multi-Tool process {process.Id} did not exit.");
-						}
+						process.WaitForExit(1500);
 					}
 					catch (InvalidOperationException)
 					{
@@ -310,18 +308,6 @@ internal sealed class InstallerForm : Form
 					catch (Exception ex)
 					{
 						lastError = ex;
-						try
-						{
-							if (!process.HasExited)
-							{
-								process.Kill(entireProcessTree: true);
-								process.WaitForExit(5000);
-							}
-						}
-						catch (Exception killError)
-						{
-							lastError = killError;
-						}
 					}
 				}
 			}
@@ -333,6 +319,22 @@ internal sealed class InstallerForm : Form
 		throw new InvalidOperationException(
 			"The BDO Multi-Tool instance being updated is still running. Close it from the system tray and try again.",
 			lastError);
+	}
+
+	private static void RequestGracefulAppShutdown()
+	{
+		try
+		{
+			using NamedPipeClientStream client = new NamedPipeClientStream(".", SingleInstancePipeName, PipeDirection.Out);
+			client.Connect(1500);
+			using StreamWriter writer = new StreamWriter(client);
+			writer.WriteLine("shutdown-for-update");
+			writer.Flush();
+		}
+		catch
+		{
+			// Older builds do not understand the shutdown command; their normal update flow still exits itself.
+		}
 	}
 
 	private Process[] GetTargetProcesses()
@@ -594,7 +596,7 @@ internal sealed class InstallerForm : Form
 <Task version=""1.4"" xmlns=""http://schemas.microsoft.com/windows/2004/02/mit/task"">
   <RegistrationInfo>
     <Author>BDO Multi-Tool</Author>
-    <Description>Keeps BDO Multi-Tool market analytics samples fresh for EU and NA.</Description>
+    <Description>Keeps BDO Multi-Tool EU market analytics samples fresh once per day.</Description>
   </RegistrationInfo>
   <Triggers>
     <LogonTrigger>
@@ -602,7 +604,7 @@ internal sealed class InstallerForm : Form
     </LogonTrigger>
     <TimeTrigger>
       <Repetition>
-        <Interval>PT3H</Interval>
+        <Interval>PT24H</Interval>
         <StopAtDurationEnd>false</StopAtDurationEnd>
       </Repetition>
       <StartBoundary>" + SecurityElement.Escape(startBoundary) + @"</StartBoundary>
